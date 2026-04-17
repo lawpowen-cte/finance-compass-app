@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/settings/app_settings_controller.dart';
@@ -12,11 +13,13 @@ class SettingsScreen extends StatelessWidget {
     required this.settingsController,
     required this.onLoadExampleData,
     required this.onExportJson,
+    required this.onImportJson,
   });
 
   final AppSettingsController settingsController;
   final Future<void> Function() onLoadExampleData;
   final Future<String> Function() onExportJson;
+  final Future<void> Function(String path) onImportJson;
 
   @override
   Widget build(BuildContext context) {
@@ -83,6 +86,7 @@ class SettingsScreen extends StatelessWidget {
         const SizedBox(height: 16),
         SectionCard(
           title: '数据',
+          subtitle: '导入 JSON 会覆盖当前本地数据',
           child: Wrap(
             spacing: 12,
             runSpacing: 12,
@@ -98,7 +102,7 @@ class SettingsScreen extends StatelessWidget {
                   );
                 },
                 icon: const Icon(Icons.dataset_outlined),
-                label: const Text('导入示例数据'),
+                label: const Text('Set Example Data'),
               ),
               FilledButton.tonalIcon(
                 onPressed: () async {
@@ -112,6 +116,27 @@ class SettingsScreen extends StatelessWidget {
                 },
                 icon: const Icon(Icons.download_outlined),
                 label: const Text('导出 JSON'),
+              ),
+              FilledButton.tonalIcon(
+                onPressed: () async {
+                  final result = await FilePicker.platform.pickFiles(
+                    type: FileType.custom,
+                    allowedExtensions: const ['json'],
+                  );
+                  final path = result?.files.single.path;
+                  if (path == null) {
+                    return;
+                  }
+                  await onImportJson(path);
+                  if (!context.mounted) {
+                    return;
+                  }
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('JSON 已导入并恢复')),
+                  );
+                },
+                icon: const Icon(Icons.upload_file_outlined),
+                label: const Text('导入 JSON'),
               ),
             ],
           ),
@@ -135,7 +160,7 @@ class SettingsScreen extends StatelessWidget {
       case AppThemeStyle.dune:
         return '沙丘暖米';
       case AppThemeStyle.aurora:
-        return '极光暮紫';
+        return '极光暮彩';
     }
   }
 }

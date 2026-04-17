@@ -12,6 +12,7 @@ import '../models/category.dart';
 import '../models/forecast_summary.dart';
 import '../models/monthly_summary.dart';
 import '../models/transaction.dart';
+import '../utils/month_key.dart';
 import 'sample_data.dart';
 
 class FinanceRepository {
@@ -212,16 +213,47 @@ class FinanceRepository {
 
   List<Budget> reusableBudgets() {
     final items = [..._budgets]
-      ..sort((a, b) => categoryName(a.categoryId).compareTo(categoryName(b.categoryId)));
+      ..sort((a, b) {
+        final categoryCompare = categoryName(a.categoryId).compareTo(categoryName(b.categoryId));
+        if (categoryCompare != 0) {
+          return categoryCompare;
+        }
+        return _compareMonthKeys(b.monthKey, a.monthKey);
+      });
     return items;
   }
 
   List<Budget> activeBudgetsForMonth(String monthKey) {
-    return _budgets.where((item) => _compareMonthKeys(item.monthKey, monthKey) <= 0).toList();
+    final latestByCategory = <String, Budget>{};
+    for (final budget in _budgets) {
+      if (_compareMonthKeys(budget.monthKey, monthKey) > 0) {
+        continue;
+      }
+      final existing = latestByCategory[budget.categoryId];
+      if (existing == null || _compareMonthKeys(budget.monthKey, existing.monthKey) > 0) {
+        latestByCategory[budget.categoryId] = budget;
+      }
+    }
+    final items = latestByCategory.values.toList()
+      ..sort((a, b) => categoryName(a.categoryId).compareTo(categoryName(b.categoryId)));
+    return items;
   }
 
-  double totalBudgetAmount() {
-    return _budgets.fold(0, (sum, item) => sum + item.amount);
+  List<String> budgetMonthKeys({int futureMonths = 6}) {
+    final now = DateTime.now();
+    final monthKeys = <String>{
+      monthKeyFromDate(now),
+      ..._transactions.map((item) => monthKeyFromDate(item.transactionDate)),
+      ..._budgets.map((item) => item.monthKey),
+      ...List.generate(futureMonths, (index) => monthKeyFromDate(DateTime(now.year, now.month + index + 1))),
+    }.toList()
+      ..sort((a, b) => _compareMonthKeys(b, a));
+    return monthKeys;
+  }
+
+  double totalBudgetAmount({String? monthKey}) {
+    final items = monthKey == null ? _budgets : activeBudgetsForMonth(monthKey);
+    return items.fold(0, (sum, item) => sum + item.amount);
   }
 
   double totalBudgetExpenseForMonth(String monthKey) {
@@ -242,16 +274,30 @@ class FinanceRepository {
       return 0;
     }
 
+    final categoryBudgets = _budgets
+        .where((item) => item.categoryId == budget.categoryId)
+        .toList()
+      ..sort((a, b) => _compareMonthKeys(a.monthKey, b.monthKey));
+    if (categoryBudgets.isEmpty) {
+      return 0;
+    }
+
+    final firstBudget = categoryBudgets.first;
     var carry = 0.0;
-    for (final currentMonthKey in _monthKeyRange(budget.monthKey, monthKey)) {
-      final effective = budget.amount + carry;
+    for (final currentMonthKey in _monthKeyRange(firstBudget.monthKey, monthKey)) {
+      final activeBudget = _budgetForCategoryInMonth(budget.categoryId, currentMonthKey);
+      if (activeBudget == null) {
+        carry = 0.0;
+        continue;
+      }
+      final effective = activeBudget.amount + carry;
       if (currentMonthKey == monthKey) {
         return effective;
       }
-      final spent = expenseTotalForCategory(budget.categoryId, currentMonthKey);
-      carry = budget.rolloverEnabled ? (effective - spent).clamp(0, double.infinity) : 0.0;
+      final spent = expenseTotalForCategory(activeBudget.categoryId, currentMonthKey);
+      carry = activeBudget.rolloverEnabled ? (effective - spent).clamp(0, double.infinity) : 0.0;
     }
-    return budget.amount;
+    return 0;
   }
 
   double totalEffectiveBudgetForMonth(String monthKey) {
@@ -446,6 +492,89 @@ class FinanceRepository {
     return file.path;
   }
 
+  Future<FinanceRepository> importJsonSnapshot(String path) async {
+    final file = File(path);
+    final raw = await file.readAsString();
+    final payload = jsonDecode(raw) as Map<String, dynamic>;
+
+    final accountItems = (payload['accounts'] as List<dynamic>? ?? const [])
+        .map(
+          (item) => Account(
+            id: item['id'] as String,
+            name: item['name'] as String,
+            accountType: AccountType.values.byName(item['account_type'] as String),
+            reportGroup: ReportGroup.values.byName(item['report_group'] as String),
+            currency: item['currency'] as String? ?? 'MYR',
+            initialBalance: (item['initial_balance'] as num?)?.toDouble() ?? 0,
+            currentBalance: (item['current_balance'] as num?)?.toDouble() ?? 0,
+            institution: item['institution'] as String?,
+            note: item['note'] as String?,
+            isActive: item['is_active'] as bool? ?? true,
+          ),
+        )
+        .toList();
+    final categoryItems = (payload['categories'] as List<dynamic>? ?? const [])
+        .map(
+          (item) => Category(
+            id: item['id'] as String,
+            name: item['name'] as String,
+            type: CategoryType.values.byName(item['type'] as String),
+            parentId: item['parent_id'] as String?,
+          ),
+        )
+        .toList();
+    final budgetItems = (payload['budgets'] as List<dynamic>? ?? const [])
+        .map(
+          (item) => Budget(
+            id: item['id'] as String,
+            categoryId: item['category_id'] as String,
+            monthKey: item['month_key'] as String,
+            amount: (item['amount'] as num).toDouble(),
+            alertThreshold: (item['alert_threshold'] as num?)?.toDouble() ?? 0.8,
+            rolloverEnabled: item['rollover_enabled'] as bool? ?? false,
+          ),
+        )
+        .toList();
+    final transactionItems = (payload['transactions'] as List<dynamic>? ?? const [])
+        .map(
+          (item) => FinanceTransaction(
+            id: item['id'] as String,
+            type: TransactionType.values.byName(item['type'] as String),
+            accountId: item['account_id'] as String,
+            toAccountId: item['to_account_id'] as String?,
+            categoryId: item['category_id'] as String?,
+            amount: (item['amount'] as num).toDouble(),
+            currency: item['currency'] as String? ?? 'MYR',
+            transactionDate: DateTime.parse(item['transaction_date'] as String),
+            description: item['description'] as String?,
+            merchant: item['merchant'] as String?,
+          ),
+        )
+        .toList();
+    final snapshotItems = (payload['asset_snapshots'] as List<dynamic>? ?? const [])
+        .map(
+          (item) => AssetSnapshot(
+            id: item['id'] as String,
+            accountId: item['account_id'] as String,
+            snapshotDate: DateTime.parse(item['snapshot_date'] as String),
+            marketValue: (item['market_value'] as num).toDouble(),
+            costBasis: (item['cost_basis'] as num?)?.toDouble() ?? 0,
+            cashBalance: (item['cash_balance'] as num?)?.toDouble() ?? 0,
+            unrealizedPnl: (item['unrealized_pnl'] as num?)?.toDouble() ?? 0,
+          ),
+        )
+        .toList();
+
+    await database.replaceAllWithSeedData(
+      accountItems: accountItems,
+      categoryItems: categoryItems,
+      budgetItems: budgetItems,
+      transactionItems: transactionItems,
+      snapshotItems: snapshotItems,
+    );
+    return refresh();
+  }
+
   Future<FinanceRepository> addCategory(Category category) async {
     await database.insertCategory(category);
     return refresh();
@@ -502,6 +631,19 @@ class FinanceRepository {
     final rightYear = int.tryParse(rightParts[0]) ?? 0;
     final rightMonth = int.tryParse(rightParts[1]) ?? 0;
     return DateTime(leftYear, leftMonth).compareTo(DateTime(rightYear, rightMonth));
+  }
+
+  Budget? _budgetForCategoryInMonth(String categoryId, String monthKey) {
+    Budget? latest;
+    for (final budget in _budgets.where((item) => item.categoryId == categoryId)) {
+      if (_compareMonthKeys(budget.monthKey, monthKey) > 0) {
+        continue;
+      }
+      if (latest == null || _compareMonthKeys(budget.monthKey, latest.monthKey) > 0) {
+        latest = budget;
+      }
+    }
+    return latest;
   }
 
   List<String> _monthKeyRange(String startMonthKey, String endMonthKey) {

@@ -10,33 +10,41 @@ import '../../core/utils/month_range.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key, required this.repository});
 
   final FinanceRepository repository;
 
   @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  String? selectedBudgetMonth;
+
+  @override
   Widget build(BuildContext context) {
-    final monthKey = monthKeyFromDate(DateTime.now());
-    final budgetMonthKeys = repository.transactions
-        .map((item) => monthKeyFromDate(item.transactionDate))
-        .toSet()
-        .toList()
-      ..sort((a, b) => b.compareTo(a));
-    final selectedBudgetMonth = budgetMonthKeys.isEmpty ? monthKey : budgetMonthKeys.first;
+    final repository = widget.repository;
+    final currentMonthKey = monthKeyFromDate(DateTime.now());
+    final budgetMonthKeys = repository.budgetMonthKeys();
+    final activeBudgetMonth = budgetMonthKeys.contains(selectedBudgetMonth)
+        ? selectedBudgetMonth!
+        : (budgetMonthKeys.isEmpty ? currentMonthKey : budgetMonthKeys.first);
+
     final cashTotal = repository.totalAssetsByGroup(ReportGroup.cash);
     final creditTotal = repository.totalAssetsByGroup(ReportGroup.credit);
     final investmentTotal = repository.totalAssetsByGroup(ReportGroup.investment);
     final retirementTotal = repository.totalAssetsByGroup(ReportGroup.retirement);
-    final income = repository.totalIncomeForMonth(monthKey);
-    final expense = repository.totalExpenseForMonth(monthKey);
+    final income = repository.totalIncomeForMonth(currentMonthKey);
+    final expense = repository.totalExpenseForMonth(currentMonthKey);
     final monthlySummaries = repository.monthlySummaries(months: 4);
     final futureExpenseReserve = repository.totalFutureExpense(monthsAhead: 3);
     final futureMonthlySummaries = repository.futureExpenseSummaries(months: 3);
     final upcomingExpenses = repository.upcomingExpenseTransactions();
     final forecast = repository.forecastSummary();
-    final totalBudget = repository.totalEffectiveBudgetForMonth(selectedBudgetMonth);
-    final totalBudgetExpense = repository.totalBudgetExpenseForMonth(selectedBudgetMonth);
+    final activeBudgets = repository.activeBudgetsForMonth(activeBudgetMonth);
+    final totalBudget = repository.totalEffectiveBudgetForMonth(activeBudgetMonth);
+    final totalBudgetExpense = repository.totalBudgetExpenseForMonth(activeBudgetMonth);
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -57,7 +65,7 @@ class DashboardScreen extends StatelessWidget {
             _MetricCard(label: '退休', amount: retirementTotal),
             _MetricCard(label: '本月收入', amount: income),
             _MetricCard(label: '本月支出', amount: expense),
-            _MetricCard(label: '未来3月预留', amount: futureExpenseReserve),
+            _MetricCard(label: '未来 3 月预留', amount: futureExpenseReserve),
             _MetricCard(label: '总资产', amount: repository.totalAssets()),
             _MetricCard(label: '净资产', amount: repository.totalAssets(includeCredit: false)),
           ],
@@ -83,7 +91,7 @@ class DashboardScreen extends StatelessWidget {
                     child: Row(
                       children: [
                         SizedBox(width: 70, child: Text(monthLabel(summary.monthKey))),
-                        Expanded(child: Text('预留 ${formatMoney(summary.expense)}')),
+                        Expanded(child: Text('支出 ${formatMoney(summary.expense)}')),
                         Expanded(child: Text('结余 ${formatMoney(summary.net)}')),
                       ],
                     ),
@@ -95,19 +103,45 @@ class DashboardScreen extends StatelessWidget {
         const SizedBox(height: 16),
         SectionCard(
           title: '预算监控',
-          subtitle: '结转会把上月未用完预算带到下月',
+          subtitle: '可切换月份查看预算、支出和结转后的可用额度',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('统计月份：${monthLabel(selectedBudgetMonth)}'),
-              const SizedBox(height: 6),
+              DropdownButtonFormField<String>(
+                initialValue: activeBudgetMonth,
+                decoration: const InputDecoration(
+                  labelText: '统计月份',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                items: budgetMonthKeys
+                    .map(
+                      (item) => DropdownMenuItem(
+                        value: item,
+                        child: Text(monthLabel(item)),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value == null) {
+                    return;
+                  }
+                  setState(() => selectedBudgetMonth = value);
+                },
+              ),
+              const SizedBox(height: 12),
               Text('总支出 / 总预算：${formatMoney(totalBudgetExpense)} / ${formatMoney(totalBudget)}'),
               const SizedBox(height: 12),
-              ...repository.activeBudgetsForMonth(selectedBudgetMonth).map((budget) {
-                final effectiveBudget = repository.effectiveBudgetForMonth(budget, selectedBudgetMonth);
+              if (activeBudgets.isEmpty)
+                Text(
+                  '该月份还没有预算规则',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ...activeBudgets.map((budget) {
+                final effectiveBudget = repository.effectiveBudgetForMonth(budget, activeBudgetMonth);
                 final spent = repository.expenseTotalForCategory(
                   budget.categoryId,
-                  selectedBudgetMonth,
+                  activeBudgetMonth,
                 );
                 final ratio = effectiveBudget == 0 ? 0.0 : spent / effectiveBudget;
                 final color = ratio > 1
@@ -178,7 +212,7 @@ class DashboardScreen extends StatelessWidget {
                         transaction.description ?? transaction.merchant ?? transaction.type.name,
                       ),
                       subtitle: Text(
-                        '${repository.accountName(transaction.accountId)} • '
+                        '${repository.accountName(transaction.accountId)} · '
                         '${transaction.transactionDate.year}-${transaction.transactionDate.month.toString().padLeft(2, '0')}-${transaction.transactionDate.day.toString().padLeft(2, '0')}',
                       ),
                       trailing: Text(
@@ -334,9 +368,9 @@ class _ForecastView extends StatelessWidget {
         const SizedBox(height: 6),
         Text('月均结余：${formatMoney(forecast.averageMonthlySavings)}'),
         const SizedBox(height: 10),
-        Text('3个月后预计储蓄：${formatMoney(forecast.projectedSavingsInThreeMonths)}'),
+        Text('3 个月后预计储蓄：${formatMoney(forecast.projectedSavingsInThreeMonths)}'),
         const SizedBox(height: 6),
-        Text('6个月后预计储蓄：${formatMoney(forecast.projectedSavingsInSixMonths)}'),
+        Text('6 个月后预计储蓄：${formatMoney(forecast.projectedSavingsInSixMonths)}'),
       ],
     );
   }

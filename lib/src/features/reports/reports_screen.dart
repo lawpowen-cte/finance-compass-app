@@ -5,8 +5,8 @@ import '../../core/models/account.dart';
 import '../../core/models/category.dart';
 import '../../core/models/monthly_summary.dart';
 import '../../core/utils/currency_formatter.dart';
-import '../../core/utils/month_range.dart';
 import '../../core/utils/month_key.dart';
+import '../../core/utils/month_range.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 import '../shared/simple_charts.dart';
@@ -30,10 +30,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
   @override
   Widget build(BuildContext context) {
     final repository = widget.repository;
-    final monthKey = monthKeyFromDate(DateTime.now());
+    final currentMonthKey = monthKeyFromDate(DateTime.now());
     final monthKeys = _monthKeys();
     final monthlySummaries = repository
-        .monthlySummaries(months: rangeType == ReportRangeType.last12Months ? 12 : DateTime.now().month)
+        .monthlySummaries(
+          months: rangeType == ReportRangeType.last12Months ? 12 : DateTime.now().month,
+        )
         .where((item) => monthKeys.contains(item.monthKey))
         .toList();
     final totalExpense = monthlySummaries.fold<double>(0, (sum, item) => sum + item.expense);
@@ -55,23 +57,25 @@ class _ReportsScreenState extends State<ReportsScreen> {
     final linePoints = monthlySummaries
         .map((item) => ChartPoint(label: monthLabel(item.monthKey), value: item.expense))
         .toList();
+    final budgetMonth = monthKeys.isEmpty ? currentMonthKey : monthKeys.last;
+    final activeBudgets = repository.activeBudgetsForMonth(budgetMonth);
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         ScreenHeader(
-          title: 'Reports',
+          title: '报表',
           actions: [
             DropdownButton<ReportRangeType>(
               value: rangeType,
               items: const [
                 DropdownMenuItem(
                   value: ReportRangeType.last12Months,
-                  child: Text('Last 12 months'),
+                  child: Text('近 12 个月'),
                 ),
                 DropdownMenuItem(
                   value: ReportRangeType.currentYear,
-                  child: Text('Current year'),
+                  child: Text('本年度'),
                 ),
               ],
               onChanged: (value) => setState(() => rangeType = value!),
@@ -81,9 +85,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
         const SizedBox(height: 16),
         SegmentedButton<ReportViewType>(
           segments: const [
-            ButtonSegment(value: ReportViewType.line, label: Text('Line')),
-            ButtonSegment(value: ReportViewType.pie, label: Text('Pie')),
-            ButtonSegment(value: ReportViewType.table, label: Text('Table')),
+            ButtonSegment(value: ReportViewType.line, label: Text('线图')),
+            ButtonSegment(value: ReportViewType.pie, label: Text('饼图')),
+            ButtonSegment(value: ReportViewType.table, label: Text('表格')),
           ],
           selected: {viewType},
           onSelectionChanged: (selection) {
@@ -92,21 +96,20 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ),
         const SizedBox(height: 16),
         SectionCard(
-          title: 'Monthly Summary',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          title: '期间汇总',
+          child: Wrap(
+            spacing: 16,
+            runSpacing: 8,
             children: [
-              Text('Income: ${formatMoney(totalIncome)}'),
-              const SizedBox(height: 6),
-              Text('Expense: ${formatMoney(totalExpense)}'),
-              const SizedBox(height: 6),
-              Text('Net: ${formatMoney(totalIncome - totalExpense)}'),
+              Text('收入 ${formatMoney(totalIncome)}'),
+              Text('支出 ${formatMoney(totalExpense)}'),
+              Text('结余 ${formatMoney(totalIncome - totalExpense)}'),
             ],
           ),
         ),
         const SizedBox(height: 16),
         SectionCard(
-          title: 'Expense View',
+          title: '支出视图',
           child: _buildChart(
             context,
             viewType: viewType,
@@ -117,46 +120,62 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ),
         const SizedBox(height: 16),
         SectionCard(
-          title: 'Budget Status',
+          title: '预算状态',
+          subtitle: monthLabel(budgetMonth),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: repository.budgets.map((budget) {
-              final spent = repository.expenseTotalForCategory(budget.categoryId, budget.monthKey);
-              final variance = budget.amount - spent;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  '${repository.categoryName(budget.categoryId)} (${budget.monthKey}): ${formatMoney(variance)} remaining',
-                ),
-              );
-            }).toList(),
+            children: [
+              Text(
+                '总支出 / 总预算：${formatMoney(repository.totalBudgetExpenseForMonth(budgetMonth))} / '
+                '${formatMoney(repository.totalEffectiveBudgetForMonth(budgetMonth))}',
+              ),
+              const SizedBox(height: 10),
+              if (activeBudgets.isEmpty)
+                const Text('暂无预算数据'),
+              ...activeBudgets.map((budget) {
+                final effective = repository.effectiveBudgetForMonth(budget, budgetMonth);
+                final spent = repository.expenseTotalForCategory(budget.categoryId, budgetMonth);
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    '${repository.categoryName(budget.categoryId)}  ${formatMoney(spent)} / ${formatMoney(effective)}',
+                  ),
+                );
+              }),
+            ],
           ),
         ),
         const SizedBox(height: 16),
         SectionCard(
-          title: 'Group Totals',
+          title: '资产分组',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: ReportGroup.values.map((group) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  '${group.name}: ${formatMoney(repository.totalAssetsByGroup(group))}',
-                ),
-              );
-            }).toList(),
+            children: [
+              Text('总资产 ${formatMoney(repository.totalAssets())}'),
+              const SizedBox(height: 6),
+              Text('净资产 ${formatMoney(repository.totalAssets(includeCredit: false))}'),
+              const SizedBox(height: 10),
+              ...ReportGroup.values.map((group) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    '${_groupLabel(group)} ${formatMoney(repository.totalAssetsByGroup(group))}',
+                  ),
+                );
+              }),
+            ],
           ),
         ),
         const SizedBox(height: 16),
         SectionCard(
-          title: 'AI Payload Preview',
+          title: 'AI 分析数据',
           child: SelectableText(
             '{\n'
-            '  "month": "$monthKey",\n'
+            '  "month": "$currentMonthKey",\n'
             '  "income": $totalIncome,\n'
             '  "expense": $totalExpense,\n'
             '  "net": ${totalIncome - totalExpense},\n'
-              '  "assets_by_group": {\n'
+            '  "assets_by_group": {\n'
             '    "cash": ${repository.totalAssetsByGroup(ReportGroup.cash)},\n'
             '    "credit": ${repository.totalAssetsByGroup(ReportGroup.credit)},\n'
             '    "investment": ${repository.totalAssetsByGroup(ReportGroup.investment)},\n'
@@ -201,13 +220,26 @@ class _ReportsScreenState extends State<ReportsScreen> {
               return Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(
-                  '${monthLabel(summary.monthKey)} | income ${formatMoney(summary.income)} | '
-                  'expense ${formatMoney(summary.expense)} | net ${formatMoney(summary.net)}',
+                  '${monthLabel(summary.monthKey)} | 收入 ${formatMoney(summary.income)} | '
+                  '支出 ${formatMoney(summary.expense)} | 结余 ${formatMoney(summary.net)}',
                 ),
               );
             }),
           ],
         );
+    }
+  }
+
+  String _groupLabel(ReportGroup group) {
+    switch (group) {
+      case ReportGroup.cash:
+        return '现金';
+      case ReportGroup.credit:
+        return '信用';
+      case ReportGroup.investment:
+        return '投资';
+      case ReportGroup.retirement:
+        return '退休';
     }
   }
 

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/models/budget.dart';
 import '../../core/utils/currency_formatter.dart';
+import '../../core/utils/month_key.dart';
 import '../shared/screen_header.dart';
 import 'budget_form_dialog.dart';
 
@@ -21,6 +22,7 @@ class BudgetsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final budgets = repository.reusableBudgets();
+    final currentMonth = monthKeyFromDate(DateTime.now());
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -40,9 +42,9 @@ class BudgetsScreen extends StatelessWidget {
           Card(
             margin: const EdgeInsets.only(bottom: 12),
             child: ListTile(
-              title: const Text('预算规则'),
-              subtitle: const Text('每个类别只设置一次，后续每月复用'),
-              trailing: Text(formatMoney(repository.totalBudgetAmount())),
+              title: const Text('当前生效预算'),
+              subtitle: Text('统计月份 ${currentMonth.replaceAll('-', '/')}'),
+              trailing: Text(formatMoney(repository.totalEffectiveBudgetForMonth(currentMonth))),
             ),
           ),
         ...budgets.map((budget) {
@@ -51,7 +53,8 @@ class BudgetsScreen extends StatelessWidget {
             child: ListTile(
               title: Text(repository.categoryName(budget.categoryId)),
               subtitle: Text(
-                '设立于 ${budget.monthKey} · 阈值 ${(budget.alertThreshold * 100).round()}% · ${budget.rolloverEnabled ? '已启用结转' : '未结转'}',
+                '生效于 ${budget.monthKey} · 阈值 ${(budget.alertThreshold * 100).round()}% · '
+                '${budget.rolloverEnabled ? '启用结转' : '不结转'}',
               ),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,

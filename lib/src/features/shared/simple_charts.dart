@@ -22,7 +22,7 @@ class SimpleLineChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (points.isEmpty) {
-      return const SizedBox(height: 180, child: Center(child: Text('No data')));
+      return const SizedBox(height: 180, child: Center(child: Text('暂无数据')));
     }
 
     return SizedBox(
@@ -105,7 +105,7 @@ class SimplePieLegend extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (points.isEmpty) {
-      return const SizedBox(height: 180, child: Center(child: Text('No data')));
+      return const SizedBox(height: 180, child: Center(child: Text('暂无数据')));
     }
 
     return Row(

@@ -139,6 +139,10 @@ class _HomeScreenState extends State<HomeScreen> {
     return repository!.exportJsonSnapshot();
   }
 
+  Future<void> _handleImportJson(String path) {
+    return _replaceRepository(repository!.importJsonSnapshot(path));
+  }
+
   Future<bool> _handleDeleteAccount(String accountId) async {
     final nextRepository = await repository!.deleteAccountIfSafe(accountId);
     if (nextRepository == null) {
@@ -203,6 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
         settingsController: widget.settingsController,
         onLoadExampleData: _handleLoadExampleData,
         onExportJson: _handleExportJson,
+        onImportJson: _handleImportJson,
       ),
     ];
 

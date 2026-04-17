@@ -84,7 +84,7 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: monthController,
-                  label: '设立月份',
+                  label: '生效月份',
                   validator: (value) => RegExp(r'^\d{4}-\d{2}$').hasMatch(value ?? '')
                       ? null
                       : '格式 YYYY-MM',
@@ -108,6 +108,7 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                   value: rolloverEnabled,
                   contentPadding: EdgeInsets.zero,
                   title: const Text('启用结转'),
+                  subtitle: const Text('这个月没用完的预算，会滚到下个月继续用'),
                   onChanged: (value) => setState(() => rolloverEnabled = value),
                 ),
               ],

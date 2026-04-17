@@ -371,9 +371,26 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> upsertBudget(model.Budget budget) async {
-    final existing =
-        await (select(budgets)..where((tbl) => tbl.categoryId.equals(budget.categoryId)))
-            .getSingleOrNull();
+    final existing = await (select(budgets)..where((tbl) => tbl.id.equals(budget.id))).getSingleOrNull();
+
+    if (existing == null) {
+      final sameMonthRule = await (select(budgets)
+            ..where((tbl) => tbl.categoryId.equals(budget.categoryId) & tbl.monthKey.equals(budget.monthKey)))
+          .getSingleOrNull();
+
+      if (sameMonthRule != null) {
+        await (update(budgets)..where((tbl) => tbl.id.equals(sameMonthRule.id))).write(
+          BudgetsCompanion(
+            categoryId: Value(budget.categoryId),
+            monthKey: Value(budget.monthKey),
+            amount: Value(budget.amount),
+            alertThreshold: Value(budget.alertThreshold),
+            rolloverEnabled: Value(budget.rolloverEnabled),
+          ),
+        );
+        return;
+      }
+    }
 
     if (existing == null) {
       await into(budgets).insert(
