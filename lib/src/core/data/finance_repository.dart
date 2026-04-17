@@ -78,6 +78,12 @@ class FinanceRepository {
         .fold(0, (sum, account) => sum + account.currentBalance);
   }
 
+  double totalAssets({bool includeCredit = true}) {
+    return _accounts
+        .where((account) => includeCredit || account.reportGroup != ReportGroup.credit)
+        .fold(0, (sum, account) => sum + account.currentBalance);
+  }
+
   double expenseTotalForCategory(String categoryId, String monthKey) {
     return _transactions
         .where((transaction) =>
@@ -210,12 +216,16 @@ class FinanceRepository {
     return items;
   }
 
+  List<Budget> activeBudgetsForMonth(String monthKey) {
+    return _budgets.where((item) => _compareMonthKeys(item.monthKey, monthKey) <= 0).toList();
+  }
+
   double totalBudgetAmount() {
     return _budgets.fold(0, (sum, item) => sum + item.amount);
   }
 
   double totalBudgetExpenseForMonth(String monthKey) {
-    final budgetCategoryIds = _budgets.map((item) => item.categoryId).toSet();
+    final budgetCategoryIds = activeBudgetsForMonth(monthKey).map((item) => item.categoryId).toSet();
     return _transactions
         .where(
           (item) =>
@@ -225,6 +235,28 @@ class FinanceRepository {
               _monthKey(item.transactionDate) == monthKey,
         )
         .fold(0, (sum, item) => sum + item.amount);
+  }
+
+  double effectiveBudgetForMonth(Budget budget, String monthKey) {
+    if (_compareMonthKeys(monthKey, budget.monthKey) < 0) {
+      return 0;
+    }
+
+    var carry = 0.0;
+    for (final currentMonthKey in _monthKeyRange(budget.monthKey, monthKey)) {
+      final effective = budget.amount + carry;
+      if (currentMonthKey == monthKey) {
+        return effective;
+      }
+      final spent = expenseTotalForCategory(budget.categoryId, currentMonthKey);
+      carry = budget.rolloverEnabled ? (effective - spent).clamp(0, double.infinity) : 0.0;
+    }
+    return budget.amount;
+  }
+
+  double totalEffectiveBudgetForMonth(String monthKey) {
+    return activeBudgetsForMonth(monthKey)
+        .fold(0, (sum, item) => sum + effectiveBudgetForMonth(item, monthKey));
   }
 
   Map<String, double> categoryTotalsForMonths({
@@ -457,6 +489,36 @@ class FinanceRepository {
   String _monthKey(DateTime date) {
     final month = date.month.toString().padLeft(2, '0');
     return '${date.year}-$month';
+  }
+
+  int _compareMonthKeys(String left, String right) {
+    final leftParts = left.split('-');
+    final rightParts = right.split('-');
+    if (leftParts.length != 2 || rightParts.length != 2) {
+      return left.compareTo(right);
+    }
+    final leftYear = int.tryParse(leftParts[0]) ?? 0;
+    final leftMonth = int.tryParse(leftParts[1]) ?? 0;
+    final rightYear = int.tryParse(rightParts[0]) ?? 0;
+    final rightMonth = int.tryParse(rightParts[1]) ?? 0;
+    return DateTime(leftYear, leftMonth).compareTo(DateTime(rightYear, rightMonth));
+  }
+
+  List<String> _monthKeyRange(String startMonthKey, String endMonthKey) {
+    final startParts = startMonthKey.split('-');
+    final endParts = endMonthKey.split('-');
+    if (startParts.length != 2 || endParts.length != 2) {
+      return [endMonthKey];
+    }
+    final start = DateTime(int.parse(startParts[0]), int.parse(startParts[1]));
+    final end = DateTime(int.parse(endParts[0]), int.parse(endParts[1]));
+    final result = <String>[];
+    var current = start;
+    while (!current.isAfter(end)) {
+      result.add(_monthKey(current));
+      current = DateTime(current.year, current.month + 1);
+    }
+    return result;
   }
 
   List<String> _recentMonthKeys(int count) {

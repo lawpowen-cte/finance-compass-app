@@ -35,7 +35,7 @@ class DashboardScreen extends StatelessWidget {
     final futureMonthlySummaries = repository.futureExpenseSummaries(months: 3);
     final upcomingExpenses = repository.upcomingExpenseTransactions();
     final forecast = repository.forecastSummary();
-    final totalBudget = repository.totalBudgetAmount();
+    final totalBudget = repository.totalEffectiveBudgetForMonth(selectedBudgetMonth);
     final totalBudgetExpense = repository.totalBudgetExpenseForMonth(selectedBudgetMonth);
 
     return ListView(
@@ -49,15 +49,17 @@ class DashboardScreen extends StatelessWidget {
           physics: const NeverScrollableScrollPhysics(),
           mainAxisSpacing: 12,
           crossAxisSpacing: 12,
-          childAspectRatio: 1.65,
+          childAspectRatio: 1.8,
           children: [
-            _MetricCard(label: '现金', value: formatMoney(cashTotal)),
-            _MetricCard(label: '信用', value: formatMoney(creditTotal)),
-            _MetricCard(label: '投资', value: formatMoney(investmentTotal)),
-            _MetricCard(label: '退休', value: formatMoney(retirementTotal)),
-            _MetricCard(label: '本月收入', value: formatMoney(income)),
-            _MetricCard(label: '本月支出', value: formatMoney(expense)),
-            _MetricCard(label: '未来3月预留', value: formatMoney(futureExpenseReserve)),
+            _MetricCard(label: '现金', amount: cashTotal),
+            _MetricCard(label: '信用', amount: creditTotal),
+            _MetricCard(label: '投资', amount: investmentTotal),
+            _MetricCard(label: '退休', amount: retirementTotal),
+            _MetricCard(label: '本月收入', amount: income),
+            _MetricCard(label: '本月支出', amount: expense),
+            _MetricCard(label: '未来3月预留', amount: futureExpenseReserve),
+            _MetricCard(label: '总资产', amount: repository.totalAssets()),
+            _MetricCard(label: '净资产', amount: repository.totalAssets(includeCredit: false)),
           ],
         ),
         const SizedBox(height: 16),
@@ -93,6 +95,7 @@ class DashboardScreen extends StatelessWidget {
         const SizedBox(height: 16),
         SectionCard(
           title: '预算监控',
+          subtitle: '结转会把上月未用完预算带到下月',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -100,15 +103,16 @@ class DashboardScreen extends StatelessWidget {
               const SizedBox(height: 6),
               Text('总支出 / 总预算：${formatMoney(totalBudgetExpense)} / ${formatMoney(totalBudget)}'),
               const SizedBox(height: 12),
-              ...repository.reusableBudgets().map((budget) {
+              ...repository.activeBudgetsForMonth(selectedBudgetMonth).map((budget) {
+                final effectiveBudget = repository.effectiveBudgetForMonth(budget, selectedBudgetMonth);
                 final spent = repository.expenseTotalForCategory(
                   budget.categoryId,
                   selectedBudgetMonth,
                 );
-                final ratio = budget.amount == 0 ? 0.0 : spent / budget.amount;
+                final ratio = effectiveBudget == 0 ? 0.0 : spent / effectiveBudget;
                 final color = ratio > 1
                     ? Colors.red
-                    : ratio >= 0.8
+                    : ratio >= budget.alertThreshold
                         ? Colors.orange
                         : Colors.green;
                 return Padding(
@@ -128,7 +132,7 @@ class DashboardScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${formatMoney(spent)} / ${formatMoney(budget.amount)}',
+                        '${formatMoney(spent)} / ${formatMoney(effectiveBudget)}',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
@@ -191,10 +195,13 @@ class DashboardScreen extends StatelessWidget {
 }
 
 class _MetricCard extends StatelessWidget {
-  const _MetricCard({required this.label, required this.value});
+  const _MetricCard({
+    required this.label,
+    required this.amount,
+  });
 
   final String label;
-  final String value;
+  final double amount;
 
   @override
   Widget build(BuildContext context) {
@@ -217,11 +224,30 @@ class _MetricCard extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(label, style: theme.textTheme.labelLarge),
-          const SizedBox(height: 8),
-          Text(value, style: theme.textTheme.titleLarge),
+          Row(
+            children: [
+              Expanded(
+                child: Text(label, style: theme.textTheme.labelLarge),
+              ),
+              Text(
+                currencyLabel('MYR'),
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ),
+          const Spacer(),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              formatMoneyValue(amount),
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
         ],
       ),
     );

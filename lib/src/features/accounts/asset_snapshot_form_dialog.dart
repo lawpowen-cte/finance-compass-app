@@ -46,7 +46,7 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
   Widget build(BuildContext context) {
     final investments = widget.repository.investmentAccounts();
     return AlertDialog(
-      title: const Text('Add Asset Snapshot'),
+      title: const Text('新增资产快照'),
       content: SizedBox(
         width: 420,
         child: Form(
@@ -58,7 +58,7 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
                 DropdownButtonFormField<String>(
                   initialValue: accountId,
                   decoration: const InputDecoration(
-                    labelText: 'Investment account',
+                    labelText: '投资账户',
                     border: OutlineInputBorder(),
                   ),
                   items: investments
@@ -72,40 +72,40 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
                 const SizedBox(height: 12),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Snapshot date'),
+                  title: const Text('快照日期'),
                   subtitle: Text(
                     '${snapshotDate.year}-${snapshotDate.month.toString().padLeft(2, '0')}-${snapshotDate.day.toString().padLeft(2, '0')}',
                   ),
                   trailing: TextButton(
                     onPressed: _pickDate,
-                    child: const Text('Change'),
+                    child: const Text('修改'),
                   ),
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: marketValueController,
-                  label: 'Market value',
+                  label: '市值',
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: costBasisController,
-                  label: 'Cost basis',
+                  label: '成本',
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: cashBalanceController,
-                  label: 'Cash balance',
+                  label: '现金余额',
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: pnlController,
-                  label: 'Unrealized P&L',
+                  label: '未实现盈亏',
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
                 ),
@@ -115,8 +115,8 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        FilledButton(onPressed: _submit, child: const Text('Save')),
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        FilledButton(onPressed: _submit, child: const Text('保存')),
       ],
     );
   }
@@ -151,5 +151,5 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
     );
   }
 
-  String? _numberRequired(String? value) => double.tryParse(value ?? '') == null ? 'Enter a number' : null;
+  String? _numberRequired(String? value) => double.tryParse(value ?? '') == null ? '请输入数字' : null;
 }

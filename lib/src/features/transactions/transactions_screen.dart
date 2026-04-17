@@ -110,7 +110,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       items: [
                         const DropdownMenuItem<String?>(
                           value: null,
-                          child: Text('全部月份'),
+                          child: Text('全部'),
                         ),
                         ...monthKeys.map(
                           (monthKey) => DropdownMenuItem<String?>(
@@ -133,7 +133,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       items: [
                         const DropdownMenuItem<TransactionType?>(
                           value: null,
-                          child: Text('全部类型'),
+                          child: Text('全部'),
                         ),
                         ...TransactionType.values.map(
                           (type) => DropdownMenuItem<TransactionType?>(
@@ -163,7 +163,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       items: [
                         const DropdownMenuItem<String?>(
                           value: null,
-                          child: Text('全部类别'),
+                          child: Text('全部'),
                         ),
                         ...visibleCategories.map(
                           (category) => DropdownMenuItem<String?>(

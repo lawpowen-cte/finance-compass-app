@@ -62,7 +62,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(isEdit ? 'Edit Account' : 'Add Account'),
+      title: Text(isEdit ? '编辑账户' : '新增账户'),
       content: SizedBox(
         width: 420,
         child: Form(
@@ -73,18 +73,18 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
               children: [
                 FinanceTextField(
                   controller: nameController,
-                  label: 'Account name',
+                  label: '账户名称',
                   validator: _required,
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<AccountType>(
                   initialValue: accountType,
                   decoration: const InputDecoration(
-                    labelText: 'Account type',
+                    labelText: '账户类型',
                     border: OutlineInputBorder(),
                   ),
                   items: AccountType.values
-                      .map((type) => DropdownMenuItem(value: type, child: Text(type.name)))
+                      .map((type) => DropdownMenuItem(value: type, child: Text(_accountTypeLabel(type))))
                       .toList(),
                   onChanged: (value) => setState(() {
                     accountType = value!;
@@ -95,43 +95,43 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                 DropdownButtonFormField<ReportGroup>(
                   initialValue: reportGroup,
                   decoration: const InputDecoration(
-                    labelText: 'Report group',
+                    labelText: '报表分组',
                     border: OutlineInputBorder(),
                   ),
                   items: ReportGroup.values
-                      .map((group) => DropdownMenuItem(value: group, child: Text(group.name)))
+                      .map((group) => DropdownMenuItem(value: group, child: Text(_groupLabel(group))))
                       .toList(),
                   onChanged: (value) => setState(() => reportGroup = value!),
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: currencyController,
-                  label: 'Currency',
+                  label: '货币',
                   validator: _required,
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: initialBalanceController,
-                  label: 'Initial balance',
+                  label: '初始余额',
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: currentBalanceController,
-                  label: 'Current balance',
+                  label: '当前余额',
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: institutionController,
-                  label: 'Institution',
+                  label: '机构',
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: noteController,
-                  label: 'Note',
+                  label: '备注',
                   maxLines: 3,
                 ),
               ],
@@ -142,11 +142,11 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: const Text('取消'),
         ),
         FilledButton(
           onPressed: _submit,
-          child: const Text('Save'),
+          child: const Text('保存'),
         ),
       ],
     );
@@ -175,10 +175,50 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
     );
   }
 
-  String? _required(String? value) => (value == null || value.trim().isEmpty) ? 'Required' : null;
-  String? _numberRequired(String? value) => double.tryParse(value ?? '') == null ? 'Enter a number' : null;
+  String? _required(String? value) => (value == null || value.trim().isEmpty) ? '必填' : null;
+  String? _numberRequired(String? value) => double.tryParse(value ?? '') == null ? '请输入数字' : null;
 
   String? _nullIfEmpty(String value) => value.trim().isEmpty ? null : value.trim();
+
+  String _groupLabel(ReportGroup group) {
+    switch (group) {
+      case ReportGroup.cash:
+        return '现金';
+      case ReportGroup.credit:
+        return '信用';
+      case ReportGroup.investment:
+        return '投资';
+      case ReportGroup.retirement:
+        return '退休';
+    }
+  }
+
+  String _accountTypeLabel(AccountType type) {
+    switch (type) {
+      case AccountType.cash:
+        return '现金';
+      case AccountType.bankSaving:
+        return '储蓄户口';
+      case AccountType.eWallet:
+        return '电子钱包';
+      case AccountType.creditCard:
+        return '信用卡';
+      case AccountType.moneyMarketFund:
+        return '货币基金';
+      case AccountType.pension:
+        return '养老金';
+      case AccountType.stock:
+        return '股票';
+      case AccountType.crypto:
+        return '加密货币';
+      case AccountType.trading:
+        return '交易户口';
+      case AccountType.fund:
+        return '基金';
+      case AccountType.other:
+        return '其他';
+    }
+  }
 
   ReportGroup _defaultReportGroupForType(AccountType type) {
     switch (type) {
