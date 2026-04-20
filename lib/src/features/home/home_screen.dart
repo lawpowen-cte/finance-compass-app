@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
 
 import '../../core/data/finance_repository.dart';
 import '../../core/database/database_provider.dart';
@@ -91,6 +92,29 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<FinanceRepository> _replaceRepositoryAndReturn(Future<FinanceRepository> future) async {
+    setState(() => isBusy = true);
+    try {
+      final nextRepository = await future;
+      if (!mounted) {
+        return nextRepository;
+      }
+      setState(() {
+        repository = nextRepository;
+        isBusy = false;
+      });
+      return nextRepository;
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          loadError = error;
+          isBusy = false;
+        });
+      }
+      rethrow;
+    }
+  }
+
   Future<void> _handleAddAccount(Account account) {
     return _replaceRepository(repository!.addAccount(account));
   }
@@ -115,6 +139,10 @@ class _HomeScreenState extends State<HomeScreen> {
     return _replaceRepository(repository!.updateExistingCategory(category));
   }
 
+  Future<ImportPreview> _handlePreviewImportJson(String path) {
+    return repository!.previewImportJson(path);
+  }
+
   Future<void> _handleAddTransaction(FinanceTransaction transaction) {
     return _replaceRepository(repository!.addTransaction(transaction));
   }
@@ -131,12 +159,32 @@ class _HomeScreenState extends State<HomeScreen> {
     return _replaceRepository(repository!.addAssetSnapshot(snapshot));
   }
 
+  Future<FinanceRepository> _handleUpdateSnapshot(AssetSnapshot snapshot) {
+    return _replaceRepositoryAndReturn(repository!.updateExistingAssetSnapshot(snapshot));
+  }
+
+  Future<FinanceRepository> _handleDeleteSnapshot(String snapshotId) {
+    return _replaceRepositoryAndReturn(repository!.deleteExistingAssetSnapshot(snapshotId));
+  }
+
   Future<void> _handleLoadExampleData() {
     return _replaceRepository(repository!.loadExampleData());
   }
 
-  Future<String> _handleExportJson() {
-    return repository!.exportJsonSnapshot();
+  Future<Uint8List> _handleExportJsonBytes() {
+    return repository!.exportJsonSnapshotBytes();
+  }
+
+  Future<Uint8List> _handleExportAiSummaryBytes() async {
+    final monthKeys = repository!.transactions
+        .map((item) => item.transactionDate)
+        .map((date) => '${date.year}-${date.month.toString().padLeft(2, '0')}')
+        .toSet()
+        .toList()
+      ..sort();
+    return repository!.exportAiSummaryBytes(
+      monthKeys: monthKeys,
+    );
   }
 
   Future<void> _handleImportJson(String path) {
@@ -145,6 +193,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<bool> _handleDeleteAccount(String accountId) async {
     final nextRepository = await repository!.deleteAccountIfSafe(accountId);
+    if (nextRepository == null) {
+      return false;
+    }
+    if (!mounted) {
+      return false;
+    }
+    setState(() {
+      repository = nextRepository;
+    });
+    return true;
+  }
+
+  Future<bool> _handleDeleteCategory(String categoryId) async {
+    final nextRepository = await repository!.deleteCategoryIfSafe(categoryId);
     if (nextRepository == null) {
       return false;
     }
@@ -188,6 +250,8 @@ class _HomeScreenState extends State<HomeScreen> {
         onEditAccount: _handleUpdateAccount,
         onDeleteAccount: _handleDeleteAccount,
         onAddSnapshot: _handleAddSnapshot,
+        onEditSnapshot: _handleUpdateSnapshot,
+        onDeleteSnapshot: _handleDeleteSnapshot,
       ),
       TransactionsScreen(
         repository: currentRepository,
@@ -196,6 +260,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onDeleteTransaction: _handleDeleteTransaction,
         onAddCategory: _handleAddCategory,
         onUpdateCategory: _handleUpdateCategory,
+        onDeleteCategory: _handleDeleteCategory,
       ),
       BudgetsScreen(
         repository: currentRepository,
@@ -206,8 +271,10 @@ class _HomeScreenState extends State<HomeScreen> {
       SettingsScreen(
         settingsController: widget.settingsController,
         onLoadExampleData: _handleLoadExampleData,
-        onExportJson: _handleExportJson,
+        onExportJsonBytes: _handleExportJsonBytes,
+        onExportAiSummaryBytes: _handleExportAiSummaryBytes,
         onImportJson: _handleImportJson,
+        onPreviewImportJson: _handlePreviewImportJson,
       ),
     ];
 

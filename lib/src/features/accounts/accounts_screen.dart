@@ -6,6 +6,8 @@ import '../../core/models/asset_snapshot.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
+import '../shared/simple_charts.dart';
+import 'account_detail_screen.dart';
 import 'account_form_dialog.dart';
 import 'asset_snapshot_form_dialog.dart';
 
@@ -17,6 +19,8 @@ class AccountsScreen extends StatelessWidget {
     required this.onEditAccount,
     required this.onDeleteAccount,
     required this.onAddSnapshot,
+    required this.onEditSnapshot,
+    required this.onDeleteSnapshot,
   });
 
   final FinanceRepository repository;
@@ -24,6 +28,8 @@ class AccountsScreen extends StatelessWidget {
   final Future<void> Function(Account account) onEditAccount;
   final Future<bool> Function(String accountId) onDeleteAccount;
   final Future<void> Function(AssetSnapshot snapshot) onAddSnapshot;
+  final Future<FinanceRepository> Function(AssetSnapshot snapshot) onEditSnapshot;
+  final Future<FinanceRepository> Function(String snapshotId) onDeleteSnapshot;
 
   @override
   Widget build(BuildContext context) {
@@ -73,7 +79,9 @@ class AccountsScreen extends StatelessWidget {
               title: _groupLabel(group),
               subtitle: '总额 ${formatMoney(groupTotal)}',
               child: Column(
-                children: accounts.map((account) {
+                children: accounts.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final account = entry.value;
                   final breakdown = repository.expenseBreakdownForAccount(
                     account.id,
                     _currentMonthKey(),
@@ -83,29 +91,99 @@ class AccountsScreen extends StatelessWidget {
                   final topCategory = sortedEntries.isEmpty
                       ? '本月暂无支出'
                       : '${repository.categoryName(sortedEntries.first.key)} ${formatMoney(sortedEntries.first.value)}';
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(account.name),
-                    subtitle: Text('${_accountTypeLabel(account.accountType)} | $topCategory'),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(formatMoney(account.currentBalance, currency: account.currency)),
-                        PopupMenuButton<String>(
-                          onSelected: (value) {
-                            if (value == 'edit') {
-                              _showEditAccount(context, account);
-                            }
-                            if (value == 'delete') {
-                              _attemptDeleteAccount(context, account);
-                            }
-                          },
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(value: 'edit', child: Text('编辑')),
-                            PopupMenuItem(value: 'delete', child: Text('删除')),
-                          ],
+                  final latestSnapshot = repository.latestSnapshotForAccount(account.id);
+                  final latestFlow = latestSnapshot == null
+                      ? const InvestmentFlowSummary(contribution: 0, withdrawal: 0)
+                      : repository.investmentFlowSummaryForAccount(
+                          account.id,
+                          upToDate: latestSnapshot.snapshotDate,
+                        );
+
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => AccountDetailScreen(
+                          account: account,
+                          repository: repository,
+                          onEditSnapshot: onEditSnapshot,
+                          onDeleteSnapshot: onDeleteSnapshot,
                         ),
-                      ],
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      account.name,
+                                      style: Theme.of(context).textTheme.titleSmall,
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '${_accountTypeLabel(account.accountType)} · $topCategory',
+                                      style: Theme.of(context).textTheme.bodySmall,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    formatMoney(account.currentBalance, currency: account.currency),
+                                    style: Theme.of(context).textTheme.titleSmall,
+                                  ),
+                                  PopupMenuButton<String>(
+                                    padding: EdgeInsets.zero,
+                                    onSelected: (value) {
+                                      if (value == 'edit') {
+                                        _showEditAccount(context, account);
+                                      }
+                                      if (value == 'delete') {
+                                        _attemptDeleteAccount(context, account);
+                                      }
+                                    },
+                                    itemBuilder: (_) => const [
+                                      PopupMenuItem(value: 'edit', child: Text('编辑')),
+                                      PopupMenuItem(value: 'delete', child: Text('删除')),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          if (latestSnapshot != null) ...[
+                            const SizedBox(height: 12),
+                            _SnapshotSummary(
+                              snapshot: latestSnapshot,
+                              repository: repository,
+                              currency: account.currency,
+                              flowSummary: latestFlow,
+                              trendValues: repository
+                                  .snapshotsForAccount(account.id)
+                                  .map((item) => item.marketValue)
+                                  .toList(),
+                            ),
+                          ],
+                          if (index != accounts.length - 1) ...[
+                            const SizedBox(height: 12),
+                            Divider(
+                              height: 1,
+                              color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.55),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   );
                 }).toList(),
@@ -141,7 +219,7 @@ class AccountsScreen extends StatelessWidget {
       case AccountType.cash:
         return '现金';
       case AccountType.bankSaving:
-        return '储蓄户口';
+        return '储蓄账户';
       case AccountType.eWallet:
         return '电子钱包';
       case AccountType.creditCard:
@@ -155,7 +233,7 @@ class AccountsScreen extends StatelessWidget {
       case AccountType.crypto:
         return '加密货币';
       case AccountType.trading:
-        return '交易户口';
+        return '交易账户';
       case AccountType.fund:
         return '基金';
       case AccountType.other:
@@ -218,6 +296,70 @@ class AccountsScreen extends StatelessWidget {
   }
 }
 
+class _SnapshotSummary extends StatelessWidget {
+  const _SnapshotSummary({
+    required this.snapshot,
+    required this.repository,
+    required this.currency,
+    required this.flowSummary,
+    required this.trendValues,
+  });
+
+  final AssetSnapshot snapshot;
+  final FinanceRepository repository;
+  final String currency;
+  final InvestmentFlowSummary flowSummary;
+  final List<double> trendValues;
+
+  @override
+  Widget build(BuildContext context) {
+    final pnl = repository.snapshotUnrealizedPnl(snapshot);
+    final ratio = repository.snapshotPnlRatio(snapshot);
+    final pnlColor = pnl >= 0 ? const Color(0xFF15803D) : const Color(0xFFB91C1C);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.65),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '最新快照 ${snapshot.snapshotDate.year}-${snapshot.snapshotDate.month.toString().padLeft(2, '0')}-${snapshot.snapshotDate.day.toString().padLeft(2, '0')}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 14,
+            runSpacing: 8,
+            children: [
+              Text('总市值 ${formatMoney(snapshot.marketValue, currency: currency)}'),
+              Text('累计投入 ${formatMoney(flowSummary.contribution, currency: currency)}'),
+              Text('累计取出 ${formatMoney(flowSummary.withdrawal, currency: currency)}'),
+              Text('净投入 ${formatMoney(flowSummary.netContribution, currency: currency)}'),
+              Text('现金余额 ${formatMoney(snapshot.cashBalance, currency: currency)}'),
+              Text(
+                '未实现盈亏 ${formatMoney(pnl, currency: currency)} (${(ratio * 100).toStringAsFixed(1)}%)',
+                style: TextStyle(color: pnlColor, fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          if (trendValues.length > 1) ...[
+            const SizedBox(height: 10),
+            MiniSparkline(
+              points: trendValues,
+              color: pnl >= 0 ? const Color(0xFF15803D) : const Color(0xFF0F766E),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _SummaryChip extends StatelessWidget {
   const _SummaryChip({
     required this.label,
@@ -235,7 +377,7 @@ class _SummaryChip extends StatelessWidget {
         color: Theme.of(context).cardColor.withValues(alpha: 0.8),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.8),
+          color: Theme.of(context).cardColor,
         ),
       ),
       child: Column(

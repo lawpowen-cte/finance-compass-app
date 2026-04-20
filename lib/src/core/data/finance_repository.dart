@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -137,7 +138,136 @@ class FinanceRepository {
   }
 
   List<Account> investmentAccounts() {
-    return _accounts.where((item) => item.reportGroup == ReportGroup.investment).toList();
+    return _accounts
+        .where(
+          (item) =>
+              item.reportGroup == ReportGroup.investment || item.reportGroup == ReportGroup.retirement,
+        )
+        .toList();
+  }
+
+  AssetSnapshot? latestSnapshotForAccount(String accountId) {
+    final items = _snapshots.where((item) => item.accountId == accountId).toList()
+      ..sort((a, b) => b.snapshotDate.compareTo(a.snapshotDate));
+    return items.isEmpty ? null : items.first;
+  }
+
+  List<AssetSnapshot> snapshotsForAccount(String accountId) {
+    final items = _snapshots.where((item) => item.accountId == accountId).toList()
+      ..sort((a, b) => a.snapshotDate.compareTo(b.snapshotDate));
+    return items;
+  }
+
+  AssetSnapshot? firstSnapshotForAccount(String accountId) {
+    final items = snapshotsForAccount(accountId);
+    return items.isEmpty ? null : items.first;
+  }
+
+  double costBasisForAccount(
+    String accountId, {
+    DateTime? upToDate,
+  }) {
+    final firstSnapshot = firstSnapshotForAccount(accountId);
+    if (firstSnapshot == null) {
+      return investmentFlowSummaryForAccount(
+        accountId,
+        upToDate: upToDate,
+      ).contribution;
+    }
+
+    if (upToDate != null && upToDate.isBefore(firstSnapshot.snapshotDate)) {
+      return firstSnapshot.costBasis;
+    }
+
+    final deltaFlow = investmentFlowSummaryForAccount(
+      accountId,
+      fromDateExclusive: firstSnapshot.snapshotDate,
+      upToDate: upToDate,
+    );
+    return (firstSnapshot.costBasis + deltaFlow.contribution).clamp(0, double.infinity).toDouble();
+  }
+
+  double snapshotCostBasis(AssetSnapshot snapshot) {
+    return costBasisForAccount(
+      snapshot.accountId,
+      upToDate: snapshot.snapshotDate,
+    );
+  }
+
+  double remainingCostBasisForAccount(
+    String accountId, {
+    DateTime? upToDate,
+  }) {
+    final cumulativeCost = costBasisForAccount(
+      accountId,
+      upToDate: upToDate,
+    );
+    final flow = investmentFlowSummaryForAccount(
+      accountId,
+      upToDate: upToDate,
+    );
+    return (cumulativeCost - flow.withdrawal).clamp(0, double.infinity).toDouble();
+  }
+
+  double snapshotRemainingCostBasis(AssetSnapshot snapshot) {
+    return remainingCostBasisForAccount(
+      snapshot.accountId,
+      upToDate: snapshot.snapshotDate,
+    );
+  }
+
+  double snapshotUnrealizedPnl(AssetSnapshot snapshot) {
+    return snapshot.marketValue - snapshotRemainingCostBasis(snapshot);
+  }
+
+  double snapshotPnlRatio(AssetSnapshot snapshot) {
+    final costBasis = snapshotRemainingCostBasis(snapshot);
+    if (costBasis == 0) {
+      return 0;
+    }
+    return snapshotUnrealizedPnl(snapshot) / costBasis;
+  }
+
+  InvestmentFlowSummary investmentFlowSummaryForAccount(
+    String accountId, {
+    DateTime? fromDateExclusive,
+    DateTime? upToDate,
+  }) {
+    double contribution = 0;
+    double withdrawal = 0;
+
+    for (final transaction in _transactions) {
+      if (fromDateExclusive != null &&
+          !transaction.transactionDate.isAfter(fromDateExclusive)) {
+        continue;
+      }
+      if (upToDate != null && transaction.transactionDate.isAfter(upToDate)) {
+        continue;
+      }
+
+      if (transaction.type == TransactionType.transfer) {
+        if (transaction.toAccountId == accountId) {
+          contribution += transaction.amount;
+        }
+        if (transaction.accountId == accountId) {
+          withdrawal += transaction.amount;
+        }
+      }
+
+      if (transaction.type == TransactionType.adjustment &&
+          transaction.accountId == accountId) {
+        if (transaction.amount >= 0) {
+          contribution += transaction.amount;
+        } else {
+          withdrawal += transaction.amount.abs();
+        }
+      }
+    }
+
+    return InvestmentFlowSummary(
+      contribution: contribution,
+      withdrawal: withdrawal,
+    );
   }
 
   List<FinanceTransaction> recentTransactions({int limit = 5}) {
@@ -331,7 +461,10 @@ class FinanceRepository {
   }
 
   ForecastSummary forecastSummary({int months = 3}) {
-    final summaries = monthlySummaries(months: months);
+    final summaries = monthlySummaries(months: 12)
+        .where((item) => item.income != 0 || item.expense != 0)
+        .take(months)
+        .toList();
     if (summaries.isEmpty) {
       return const ForecastSummary(
         averageMonthlyIncome: 0,
@@ -411,15 +544,11 @@ class FinanceRepository {
     return refresh();
   }
 
-  Future<String> exportJsonSnapshot() async {
-    final directory = await getApplicationDocumentsDirectory();
-    final timestamp = DateTime.now()
-        .toIso8601String()
-        .replaceAll(':', '-')
-        .replaceAll('.', '-');
-    final file = File(p.join(directory.path, 'finance_compass_export_$timestamp.json'));
-    final payload = {
+  Future<Map<String, dynamic>> buildJsonSnapshotPayload() async {
+    final metaValues = await database.fetchAllMetaValues();
+    return {
       'exported_at': DateTime.now().toIso8601String(),
+      'meta': metaValues,
       'accounts': _accounts
           .map(
             (item) => {
@@ -488,6 +617,103 @@ class FinanceRepository {
           )
           .toList(),
     };
+  }
+
+  Future<Uint8List> exportJsonSnapshotBytes() async {
+    final payload = await buildJsonSnapshotPayload();
+    return Uint8List.fromList(
+      utf8.encode(const JsonEncoder.withIndent('  ').convert(payload)),
+    );
+  }
+
+  Future<String> exportJsonSnapshot([String? targetPath]) async {
+    final file = File(targetPath ?? await _defaultExportPath());
+    final payload = await buildJsonSnapshotPayload();
+    await file.writeAsString(const JsonEncoder.withIndent('  ').convert(payload));
+    return file.path;
+  }
+
+  Map<String, dynamic> buildAiSummaryPayload({required List<String> monthKeys}) {
+    final includedMonths = monthKeys.where((monthKey) {
+      return totalIncomeForMonth(monthKey) != 0 || totalExpenseForMonth(monthKey) != 0;
+    }).toList();
+    final currentMonth = monthKeyFromDate(DateTime.now());
+    return {
+      'exported_at': DateTime.now().toIso8601String(),
+      'months': includedMonths,
+      'income_by_month': {
+        for (final monthKey in includedMonths) monthKey: totalIncomeForMonth(monthKey),
+      },
+      'expense_by_month': {
+        for (final monthKey in includedMonths) monthKey: totalExpenseForMonth(monthKey),
+      },
+      'net_by_month': {
+        for (final monthKey in includedMonths)
+          monthKey: totalIncomeForMonth(monthKey) - totalExpenseForMonth(monthKey),
+      },
+      'expense_categories_by_month': {
+        for (final monthKey in includedMonths)
+          monthKey: {
+            for (final entry in categoryTotalsForMonths(
+              type: CategoryType.expense,
+              monthKeys: [monthKey],
+            ).entries)
+              categoryName(entry.key): entry.value,
+          },
+      },
+      'income_categories_by_month': {
+        for (final monthKey in includedMonths)
+          monthKey: {
+            for (final entry in categoryTotalsForMonths(
+              type: CategoryType.income,
+              monthKeys: [monthKey],
+            ).entries)
+              categoryName(entry.key): entry.value,
+          },
+      },
+      'expense_category_totals': {
+        for (final entry in categoryTotalsForMonths(
+          type: CategoryType.expense,
+          monthKeys: includedMonths,
+        ).entries)
+          categoryName(entry.key): entry.value,
+      },
+      'income_category_totals': {
+        for (final entry in categoryTotalsForMonths(
+          type: CategoryType.income,
+          monthKeys: includedMonths,
+        ).entries)
+          categoryName(entry.key): entry.value,
+      },
+      'assets_by_group': {
+        'cash': totalAssetsByGroup(ReportGroup.cash),
+        'credit': totalAssetsByGroup(ReportGroup.credit),
+        'investment': totalAssetsByGroup(ReportGroup.investment),
+        'retirement': totalAssetsByGroup(ReportGroup.retirement),
+      },
+      'budgets_current_month': {
+        for (final budget in activeBudgetsForMonth(currentMonth))
+          categoryName(budget.categoryId): {
+            'budget': effectiveBudgetForMonth(budget, currentMonth),
+            'spent': expenseTotalForCategory(budget.categoryId, currentMonth),
+          },
+      },
+    };
+  }
+
+  Uint8List exportAiSummaryBytes({required List<String> monthKeys}) {
+    return Uint8List.fromList(
+      utf8.encode(
+        const JsonEncoder.withIndent('  ').convert(
+          buildAiSummaryPayload(monthKeys: monthKeys),
+        ),
+      ),
+    );
+  }
+
+  Future<String> exportAiSummaryJson(String targetPath, {required List<String> monthKeys}) async {
+    final payload = buildAiSummaryPayload(monthKeys: monthKeys);
+    final file = File(targetPath);
     await file.writeAsString(const JsonEncoder.withIndent('  ').convert(payload));
     return file.path;
   }
@@ -496,6 +722,7 @@ class FinanceRepository {
     final file = File(path);
     final raw = await file.readAsString();
     final payload = jsonDecode(raw) as Map<String, dynamic>;
+    final metaPayload = payload['meta'] as Map<String, dynamic>? ?? const {};
 
     final accountItems = (payload['accounts'] as List<dynamic>? ?? const [])
         .map(
@@ -565,14 +792,40 @@ class FinanceRepository {
         )
         .toList();
 
+    final hasAnyData = accountItems.isNotEmpty ||
+        categoryItems.isNotEmpty ||
+        budgetItems.isNotEmpty ||
+        transactionItems.isNotEmpty ||
+        snapshotItems.isNotEmpty;
+    if (!hasAnyData) {
+      throw const FormatException('Import file does not contain any finance data.');
+    }
+
     await database.replaceAllWithSeedData(
       accountItems: accountItems,
       categoryItems: categoryItems,
       budgetItems: budgetItems,
       transactionItems: transactionItems,
       snapshotItems: snapshotItems,
+      metaValues: {
+        for (final entry in metaPayload.entries) entry.key: '${entry.value}',
+      },
     );
     return refresh();
+  }
+
+  Future<ImportPreview> previewImportJson(String path) async {
+    final file = File(path);
+    final raw = await file.readAsString();
+    final payload = jsonDecode(raw) as Map<String, dynamic>;
+    return ImportPreview(
+      accounts: (payload['accounts'] as List<dynamic>? ?? const []).length,
+      categories: (payload['categories'] as List<dynamic>? ?? const []).length,
+      budgets: (payload['budgets'] as List<dynamic>? ?? const []).length,
+      transactions: (payload['transactions'] as List<dynamic>? ?? const []).length,
+      assetSnapshots: (payload['asset_snapshots'] as List<dynamic>? ?? const []).length,
+      exportedAt: payload['exported_at'] as String?,
+    );
   }
 
   Future<FinanceRepository> addCategory(Category category) async {
@@ -582,6 +835,18 @@ class FinanceRepository {
 
   Future<FinanceRepository> updateExistingCategory(Category category) async {
     await database.updateCategory(category);
+    return refresh();
+  }
+
+  Future<bool> canDeleteCategory(String categoryId) {
+    return database.categoryHasLinkedData(categoryId).then((hasLinks) => !hasLinks);
+  }
+
+  Future<FinanceRepository?> deleteCategoryIfSafe(String categoryId) async {
+    final deleted = await database.deleteCategoryIfSafe(categoryId);
+    if (!deleted) {
+      return null;
+    }
     return refresh();
   }
 
@@ -612,6 +877,16 @@ class FinanceRepository {
 
   Future<FinanceRepository> addAssetSnapshot(AssetSnapshot snapshot) async {
     await database.insertAssetSnapshot(snapshot);
+    return refresh();
+  }
+
+  Future<FinanceRepository> updateExistingAssetSnapshot(AssetSnapshot snapshot) async {
+    await database.updateAssetSnapshot(snapshot);
+    return refresh();
+  }
+
+  Future<FinanceRepository> deleteExistingAssetSnapshot(String snapshotId) async {
+    await database.deleteAssetSnapshot(snapshotId);
     return refresh();
   }
 
@@ -670,4 +945,43 @@ class FinanceRepository {
       return _monthKey(date);
     });
   }
+
+  Future<String> _defaultExportPath() async {
+    final directory = await getApplicationDocumentsDirectory();
+    final timestamp = DateTime.now()
+        .toIso8601String()
+        .replaceAll(':', '-')
+        .replaceAll('.', '-');
+    return p.join(directory.path, 'finance_compass_export_$timestamp.json');
+  }
+}
+
+class ImportPreview {
+  const ImportPreview({
+    required this.accounts,
+    required this.categories,
+    required this.budgets,
+    required this.transactions,
+    required this.assetSnapshots,
+    required this.exportedAt,
+  });
+
+  final int accounts;
+  final int categories;
+  final int budgets;
+  final int transactions;
+  final int assetSnapshots;
+  final String? exportedAt;
+}
+
+class InvestmentFlowSummary {
+  const InvestmentFlowSummary({
+    required this.contribution,
+    required this.withdrawal,
+  });
+
+  final double contribution;
+  final double withdrawal;
+
+  double get netContribution => contribution - withdrawal;
 }

@@ -37,14 +37,16 @@ class _ReportsScreenState extends State<ReportsScreen> {
           months: rangeType == ReportRangeType.last12Months ? 12 : DateTime.now().month,
         )
         .where((item) => monthKeys.contains(item.monthKey))
+        .where((item) => item.income != 0 || item.expense != 0)
         .toList();
     final totalExpense = monthlySummaries.fold<double>(0, (sum, item) => sum + item.expense);
     final totalIncome = monthlySummaries.fold<double>(0, (sum, item) => sum + item.income);
     final expenseByCategory = repository.categoryTotalsForMonths(
       type: CategoryType.expense,
-      monthKeys: monthKeys,
+      monthKeys: monthlySummaries.map((item) => item.monthKey).toList(),
     );
     final categoryPoints = expenseByCategory.entries
+        .where((entry) => entry.value > 0)
         .map(
           (entry) => ChartPoint(
             label: repository.categoryName(entry.key),
@@ -57,7 +59,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     final linePoints = monthlySummaries
         .map((item) => ChartPoint(label: monthLabel(item.monthKey), value: item.expense))
         .toList();
-    final budgetMonth = monthKeys.isEmpty ? currentMonthKey : monthKeys.last;
+    final budgetMonth = monthlySummaries.isEmpty ? currentMonthKey : monthlySummaries.last.monthKey;
     final activeBudgets = repository.activeBudgetsForMonth(budgetMonth);
 
     return ListView(
@@ -130,15 +132,17 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 '${formatMoney(repository.totalEffectiveBudgetForMonth(budgetMonth))}',
               ),
               const SizedBox(height: 10),
-              if (activeBudgets.isEmpty)
-                const Text('暂无预算数据'),
+              if (activeBudgets.isEmpty) const Text('暂无预算数据'),
               ...activeBudgets.map((budget) {
                 final effective = repository.effectiveBudgetForMonth(budget, budgetMonth);
                 final spent = repository.expenseTotalForCategory(budget.categoryId, budgetMonth);
                 return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    '${repository.categoryName(budget.categoryId)}  ${formatMoney(spent)} / ${formatMoney(effective)}',
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(repository.categoryName(budget.categoryId))),
+                      Text('${formatMoney(spent)} / ${formatMoney(effective)}'),
+                    ],
                   ),
                 );
               }),
@@ -207,25 +211,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }) {
     switch (viewType) {
       case ReportViewType.line:
-        return SimpleLineChart(points: linePoints);
+        return SimpleLineChart(
+          points: linePoints,
+          amountBuilder: (value) => formatMoney(value),
+        );
       case ReportViewType.pie:
-        return SimplePieLegend(points: categoryPoints);
+        return SimplePieLegend(
+          points: categoryPoints,
+          amountBuilder: (value) => formatMoney(value),
+        );
       case ReportViewType.table:
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SimpleBarTable(points: linePoints),
-            const SizedBox(height: 16),
-            ...monthlySummaries.map((summary) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  '${monthLabel(summary.monthKey)} | 收入 ${formatMoney(summary.income)} | '
-                  '支出 ${formatMoney(summary.expense)} | 结余 ${formatMoney(summary.net)}',
-                ),
-              );
-            }),
-          ],
+        return _MonthlyMatrix(
+          summaries: monthlySummaries,
+          firstLabel: '收入',
+          secondLabel: '支出',
+          thirdLabel: '结余',
         );
     }
   }
@@ -253,5 +253,77 @@ class _ReportsScreenState extends State<ReportsScreen> {
       const Color(0xFF059669),
     ];
     return colors[seed.hashCode.abs() % colors.length];
+  }
+}
+
+class _MonthlyMatrix extends StatelessWidget {
+  const _MonthlyMatrix({
+    required this.summaries,
+    required this.firstLabel,
+    required this.secondLabel,
+    required this.thirdLabel,
+  });
+
+  final List<MonthlySummary> summaries;
+  final String firstLabel;
+  final String secondLabel;
+  final String thirdLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    if (summaries.isEmpty) {
+      return const Text('暂无数据');
+    }
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            const SizedBox(width: 52),
+            ...summaries.map(
+              (summary) => Expanded(
+                child: Text(
+                  monthLabel(summary.monthKey),
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        _MatrixRow(label: firstLabel, values: summaries.map((item) => formatMoney(item.income)).toList()),
+        _MatrixRow(label: secondLabel, values: summaries.map((item) => formatMoney(item.expense)).toList()),
+        _MatrixRow(label: thirdLabel, values: summaries.map((item) => formatMoney(item.net)).toList()),
+      ],
+    );
+  }
+}
+
+class _MatrixRow extends StatelessWidget {
+  const _MatrixRow({required this.label, required this.values});
+
+  final String label;
+  final List<String> values;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          SizedBox(width: 52, child: Text(label)),
+          ...values.map(
+            (value) => Expanded(
+              child: Text(
+                value,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

@@ -161,6 +161,13 @@ class AppDatabase extends _$AppDatabase {
     return row?.value;
   }
 
+  Future<Map<String, String>> fetchAllMetaValues() async {
+    final rows = await select(appMeta).get();
+    return {
+      for (final row in rows) row.key: row.value,
+    };
+  }
+
   Future<void> setMetaValue(String keyValue, String valueText) {
     return into(appMeta).insertOnConflictUpdate(
       AppMetaCompanion(
@@ -269,6 +276,7 @@ class AppDatabase extends _$AppDatabase {
     required List<model.Budget> budgetItems,
     required List<model.FinanceTransaction> transactionItems,
     required List<model.AssetSnapshot> snapshotItems,
+    Map<String, String>? metaValues,
   }) async {
     await super.transaction(() async {
       await delete(assetSnapshots).go();
@@ -276,6 +284,7 @@ class AppDatabase extends _$AppDatabase {
       await delete(budgets).go();
       await delete(categories).go();
       await delete(accounts).go();
+      await delete(appMeta).go();
 
       await seedAll(
         accountItems: accountItems,
@@ -284,6 +293,22 @@ class AppDatabase extends _$AppDatabase {
         transactionItems: transactionItems,
         snapshotItems: snapshotItems,
       );
+
+      if (metaValues != null && metaValues.isNotEmpty) {
+        await batch((batch) {
+          batch.insertAll(
+            appMeta,
+            metaValues.entries
+                .map(
+                  (entry) => AppMetaCompanion.insert(
+                    key: entry.key,
+                    value: entry.value,
+                  ),
+                )
+                .toList(),
+          );
+        });
+      }
 
       await into(appMeta).insertOnConflictUpdate(
         const AppMetaCompanion(
@@ -328,14 +353,17 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<bool> accountHasLinkedData(String accountId) async {
-    final ownedTransactions = await (select(transactions)
-          ..where((tbl) => tbl.accountId.equals(accountId) | tbl.toAccountId.equals(accountId)))
+    final ownedTransactions = await ((select(transactions)
+          ..where((tbl) => tbl.accountId.equals(accountId) | tbl.toAccountId.equals(accountId))
+          ..limit(1)))
         .getSingleOrNull();
     if (ownedTransactions != null) {
       return true;
     }
 
-    final snapshot = await (select(assetSnapshots)..where((tbl) => tbl.accountId.equals(accountId)))
+    final snapshot = await ((select(assetSnapshots)
+          ..where((tbl) => tbl.accountId.equals(accountId))
+          ..limit(1)))
         .getSingleOrNull();
     return snapshot != null;
   }
@@ -368,6 +396,27 @@ class AppDatabase extends _$AppDatabase {
         parentId: Value(category.parentId),
       ),
     );
+  }
+
+  Future<bool> categoryHasLinkedData(String categoryId) async {
+    final linkedTransaction =
+        await ((select(transactions)..where((tbl) => tbl.categoryId.equals(categoryId))..limit(1)))
+            .getSingleOrNull();
+    if (linkedTransaction != null) {
+      return true;
+    }
+    final linkedBudget =
+        await ((select(budgets)..where((tbl) => tbl.categoryId.equals(categoryId))..limit(1)))
+            .getSingleOrNull();
+    return linkedBudget != null;
+  }
+
+  Future<bool> deleteCategoryIfSafe(String categoryId) async {
+    if (await categoryHasLinkedData(categoryId)) {
+      return false;
+    }
+    await (delete(categories)..where((tbl) => tbl.id.equals(categoryId))).go();
+    return true;
   }
 
   Future<void> upsertBudget(model.Budget budget) async {
@@ -520,6 +569,57 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
+  Future<void> updateAssetSnapshot(model.AssetSnapshot snapshot) async {
+    await super.transaction(() async {
+      await (update(assetSnapshots)..where((tbl) => tbl.id.equals(snapshot.id))).write(
+        AssetSnapshotsCompanion(
+          accountId: Value(snapshot.accountId),
+          snapshotDate: Value(snapshot.snapshotDate),
+          marketValue: Value(snapshot.marketValue),
+          costBasis: Value(snapshot.costBasis),
+          cashBalance: Value(snapshot.cashBalance),
+          unrealizedPnl: Value(snapshot.unrealizedPnl),
+        ),
+      );
+
+      final latest = await (select(assetSnapshots)
+            ..where((tbl) => tbl.accountId.equals(snapshot.accountId))
+            ..orderBy([(tbl) => OrderingTerm.desc(tbl.snapshotDate)])
+            ..limit(1))
+          .getSingleOrNull();
+      if (latest != null) {
+        await (update(accounts)..where((tbl) => tbl.id.equals(snapshot.accountId))).write(
+          AccountsCompanion(
+            currentBalance: Value(latest.marketValue),
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> deleteAssetSnapshot(String snapshotId) async {
+    await super.transaction(() async {
+      final existing =
+          await (select(assetSnapshots)..where((tbl) => tbl.id.equals(snapshotId))).getSingleOrNull();
+      if (existing == null) {
+        return;
+      }
+      final accountId = existing.accountId;
+      await (delete(assetSnapshots)..where((tbl) => tbl.id.equals(snapshotId))).go();
+
+      final latest = await (select(assetSnapshots)
+            ..where((tbl) => tbl.accountId.equals(accountId))
+            ..orderBy([(tbl) => OrderingTerm.desc(tbl.snapshotDate)])
+            ..limit(1))
+          .getSingleOrNull();
+      await (update(accounts)..where((tbl) => tbl.id.equals(accountId))).write(
+        AccountsCompanion(
+          currentBalance: Value(latest?.marketValue ?? 0),
+        ),
+      );
+    });
+  }
+
   Future<void> clearAllUserData() async {
     await super.transaction(() async {
       await delete(assetSnapshots).go();
@@ -539,8 +639,15 @@ class AppDatabase extends _$AppDatabase {
   Future<void> _applyTransactionToBalances(model.FinanceTransaction transaction) async {
     switch (transaction.type) {
       case model.TransactionType.income:
+        await _incrementAccountBalance(transaction.accountId, transaction.amount);
+        return;
       case model.TransactionType.adjustment:
         await _incrementAccountBalance(transaction.accountId, transaction.amount);
+        await _syncAdjustmentIntoSnapshot(
+          accountId: transaction.accountId,
+          delta: transaction.amount,
+          transactionDate: transaction.transactionDate,
+        );
         return;
       case model.TransactionType.expense:
         await _incrementAccountBalance(transaction.accountId, -transaction.amount);
@@ -557,8 +664,15 @@ class AppDatabase extends _$AppDatabase {
   Future<void> _reverseTransactionFromBalances(model.FinanceTransaction transaction) async {
     switch (transaction.type) {
       case model.TransactionType.income:
+        await _incrementAccountBalance(transaction.accountId, -transaction.amount);
+        return;
       case model.TransactionType.adjustment:
         await _incrementAccountBalance(transaction.accountId, -transaction.amount);
+        await _syncAdjustmentIntoSnapshot(
+          accountId: transaction.accountId,
+          delta: -transaction.amount,
+          transactionDate: transaction.transactionDate,
+        );
         return;
       case model.TransactionType.expense:
         await _incrementAccountBalance(transaction.accountId, transaction.amount);
@@ -577,6 +691,53 @@ class AppDatabase extends _$AppDatabase {
     await (update(accounts)..where((tbl) => tbl.id.equals(accountId))).write(
       AccountsCompanion(
         currentBalance: Value(row.currentBalance + delta),
+      ),
+    );
+  }
+
+  Future<void> _syncAdjustmentIntoSnapshot({
+    required String accountId,
+    required double delta,
+    required DateTime transactionDate,
+  }) async {
+    final account = await (select(accounts)..where((tbl) => tbl.id.equals(accountId))).getSingle();
+    final reportGroup = enumByName(model.ReportGroup.values, account.reportGroup);
+    if (reportGroup != model.ReportGroup.investment &&
+        reportGroup != model.ReportGroup.retirement) {
+      return;
+    }
+
+    final latest = await (select(assetSnapshots)
+          ..where((tbl) => tbl.accountId.equals(accountId))
+          ..orderBy([(tbl) => OrderingTerm.desc(tbl.snapshotDate)])
+          ..limit(1))
+        .getSingleOrNull();
+
+    if (latest == null) {
+      final seededCost = delta.clamp(0, double.infinity).toDouble();
+      await into(assetSnapshots).insert(
+        AssetSnapshotsCompanion.insert(
+          id: 'snap_${DateTime.now().microsecondsSinceEpoch}',
+          accountId: accountId,
+          snapshotDate: transactionDate,
+          marketValue: account.currentBalance,
+          costBasis: Value(seededCost),
+          cashBalance: Value(seededCost),
+          unrealizedPnl: Value(account.currentBalance - seededCost),
+        ),
+      );
+      return;
+    }
+
+    final nextMarketValue = latest.marketValue + delta;
+    final nextCostBasis = (latest.costBasis + delta).clamp(0, double.infinity).toDouble();
+    final nextCashBalance = (latest.cashBalance + delta).clamp(0, double.infinity).toDouble();
+    await (update(assetSnapshots)..where((tbl) => tbl.id.equals(latest.id))).write(
+      AssetSnapshotsCompanion(
+        marketValue: Value(nextMarketValue),
+        costBasis: Value(nextCostBasis),
+        cashBalance: Value(nextCashBalance),
+        unrealizedPnl: Value(nextMarketValue - nextCostBasis),
       ),
     );
   }

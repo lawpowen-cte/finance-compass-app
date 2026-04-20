@@ -11,6 +11,9 @@ class FinanceThemePalette {
     required this.surface,
     required this.surfaceAlt,
     required this.border,
+    required this.cardTint,
+    required this.cardBorderStrong,
+    required this.textPrimary,
     required this.textMuted,
     required this.gradient,
   });
@@ -22,6 +25,9 @@ class FinanceThemePalette {
   final Color surface;
   final Color surfaceAlt;
   final Color border;
+  final Color cardTint;
+  final Color cardBorderStrong;
+  final Color textPrimary;
   final Color textMuted;
   final List<Color> gradient;
 }
@@ -37,6 +43,9 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         surface: Color(0xFFFDFDFE),
         surfaceAlt: Color(0xFFE9EEF4),
         border: Color(0xFFD7DEE7),
+        cardTint: Color(0xFFE7F3F0),
+        cardBorderStrong: Color(0xFF9ABFB8),
+        textPrimary: Color(0xFF315955),
         textMuted: Color(0xFF6B7280),
         gradient: [Color(0xFF8EC5BC), Color(0xFFD5E7E2)],
       );
@@ -49,6 +58,9 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         surface: Color(0xFFF9FDFF),
         surfaceAlt: Color(0xFFD6EAF3),
         border: Color(0xFFC2DAE6),
+        cardTint: Color(0xFFD9EFF8),
+        cardBorderStrong: Color(0xFF76B9D3),
+        textPrimary: Color(0xFF15556C),
         textMuted: Color(0xFF587383),
         gradient: [Color(0xFF2D9CDB), Color(0xFF8FD3F4)],
       );
@@ -61,6 +73,9 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         surface: Color(0xFFFBFDFF),
         surfaceAlt: Color(0xFFE2EBFC),
         border: Color(0xFFC9D8F1),
+        cardTint: Color(0xFFE1EBFF),
+        cardBorderStrong: Color(0xFF8FB0E2),
+        textPrimary: Color(0xFF365988),
         textMuted: Color(0xFF61708C),
         gradient: [Color(0xFF7FB3FF), Color(0xFFCFE0FF)],
       );
@@ -73,6 +88,9 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         surface: Color(0xFFFDFCFB),
         surfaceAlt: Color(0xFFF3E7DE),
         border: Color(0xFFE3D8D0),
+        cardTint: Color(0xFFF6E8DF),
+        cardBorderStrong: Color(0xFFD8AB8E),
+        textPrimary: Color(0xFF7A4E34),
         textMuted: Color(0xFF7A6E67),
         gradient: [Color(0xFFF1C8AF), Color(0xFFF8E5D8)],
       );
@@ -85,6 +103,9 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         surface: Color(0xFFFDFEFC),
         surfaceAlt: Color(0xFFE8EEDF),
         border: Color(0xFFD7DFD2),
+        cardTint: Color(0xFFE7F0E1),
+        cardBorderStrong: Color(0xFFA2B897),
+        textPrimary: Color(0xFF48613F),
         textMuted: Color(0xFF6B7566),
         gradient: [Color(0xFFB8CCA5), Color(0xFFE1EAD7)],
       );
@@ -97,6 +118,9 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         surface: Color(0xFFFFFCF8),
         surfaceAlt: Color(0xFFF2E3D3),
         border: Color(0xFFE6D2BF),
+        cardTint: Color(0xFFF6E7D6),
+        cardBorderStrong: Color(0xFFD2A780),
+        textPrimary: Color(0xFF875833),
         textMuted: Color(0xFF866B5A),
         gradient: [Color(0xFFE3B587), Color(0xFFF5E1C8)],
       );
@@ -109,6 +133,9 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         surface: Color(0xFFFEFDFF),
         surfaceAlt: Color(0xFFEAE6FB),
         border: Color(0xFFD7D1F0),
+        cardTint: Color(0xFFEEEAFE),
+        cardBorderStrong: Color(0xFFAA9CE6),
+        textPrimary: Color(0xFF51429A),
         textMuted: Color(0xFF726A92),
         gradient: [Color(0xFF8B7CF6), Color(0xFFC1B7FF)],
       );
@@ -127,30 +154,33 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
     colorScheme: colorScheme,
     scaffoldBackgroundColor: palette.background,
     textTheme: TextTheme(
-      headlineSmall: const TextStyle(
+      headlineSmall: TextStyle(
         fontSize: 31,
         fontWeight: FontWeight.w700,
         letterSpacing: -0.7,
+        color: palette.textPrimary,
       ),
-      titleLarge: const TextStyle(
+      titleLarge: TextStyle(
         fontSize: 22,
         fontWeight: FontWeight.w600,
         letterSpacing: -0.3,
+        color: palette.textPrimary,
       ),
-      titleMedium: const TextStyle(
+      titleMedium: TextStyle(
         fontSize: 17,
         fontWeight: FontWeight.w600,
         letterSpacing: -0.2,
+        color: palette.textPrimary,
       ),
       titleSmall: TextStyle(
         fontSize: 13,
         fontWeight: FontWeight.w600,
-        color: colorScheme.onSurface,
+        color: palette.textPrimary,
       ),
       bodyMedium: TextStyle(
         fontSize: 14,
         height: 1.35,
-        color: colorScheme.onSurface,
+        color: palette.textPrimary,
       ),
       bodySmall: TextStyle(
         fontSize: 12,
@@ -165,13 +195,13 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
       ),
     ),
     cardTheme: CardThemeData(
-      color: palette.surface,
+      color: palette.cardTint,
       elevation: 0,
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
         side: BorderSide(
-          color: palette.border.withValues(alpha: 0.8),
+          color: palette.cardTint,
         ),
       ),
     ),
@@ -182,7 +212,7 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: palette.surface.withValues(alpha: 0.95),
+      fillColor: palette.cardTint.withValues(alpha: 0.95),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
         borderSide: BorderSide(color: palette.border),
@@ -207,10 +237,10 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
     ),
     iconButtonTheme: IconButtonThemeData(
       style: IconButton.styleFrom(
-        backgroundColor: palette.surface.withValues(alpha: 0.92),
-        foregroundColor: colorScheme.onSurface,
+        backgroundColor: palette.cardTint,
+        foregroundColor: palette.textPrimary,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        side: BorderSide(color: palette.border.withValues(alpha: 0.9)),
+        side: BorderSide(color: palette.cardBorderStrong),
       ),
     ),
     listTileTheme: ListTileThemeData(

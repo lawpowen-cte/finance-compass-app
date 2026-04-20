@@ -15,22 +15,15 @@ class SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final border = theme.colorScheme.outlineVariant.withValues(alpha: 0.7);
+    final cardColor = theme.cardColor;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: border),
-            gradient: LinearGradient(
-              colors: [
-                Colors.white.withValues(alpha: 0.88),
-                theme.cardColor.withValues(alpha: 0.96),
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+            border: Border.all(color: cardColor),
+            color: cardColor,
             boxShadow: const [
               BoxShadow(
                 color: Color(0x140F172A),
