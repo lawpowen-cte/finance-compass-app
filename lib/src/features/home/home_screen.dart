@@ -147,6 +147,10 @@ class _HomeScreenState extends State<HomeScreen> {
     return _replaceRepository(repository!.addTransaction(transaction));
   }
 
+  Future<void> _handleAddTransactions(List<FinanceTransaction> transactions) {
+    return _replaceRepository(repository!.addTransactions(transactions));
+  }
+
   Future<void> _handleUpdateTransaction(FinanceTransaction transaction) {
     return _replaceRepository(repository!.updateExistingTransaction(transaction));
   }
@@ -171,6 +175,20 @@ class _HomeScreenState extends State<HomeScreen> {
     return _replaceRepository(repository!.loadExampleData());
   }
 
+  Future<void> _handleAddAssetGoal(String name, double amount) {
+    return _replaceRepository(
+      repository!.addAssetGoal(name: name, amount: amount),
+    );
+  }
+
+  Future<void> _handleUpdateAssetGoal(AssetGoal goal) {
+    return _replaceRepository(repository!.updateAssetGoal(goal));
+  }
+
+  Future<void> _handleDeleteAssetGoal(String goalId) {
+    return _replaceRepository(repository!.deleteAssetGoal(goalId));
+  }
+
   Future<Uint8List> _handleExportJsonBytes() {
     return repository!.exportJsonSnapshotBytes();
   }
@@ -185,6 +203,10 @@ class _HomeScreenState extends State<HomeScreen> {
     return repository!.exportAiSummaryBytes(
       monthKeys: monthKeys,
     );
+  }
+
+  Future<Uint8List> _handleExportFuturePlanningBytes() async {
+    return repository!.exportFuturePlanningCsvBytes();
   }
 
   Future<void> _handleImportJson(String path) {
@@ -252,10 +274,14 @@ class _HomeScreenState extends State<HomeScreen> {
         onAddSnapshot: _handleAddSnapshot,
         onEditSnapshot: _handleUpdateSnapshot,
         onDeleteSnapshot: _handleDeleteSnapshot,
+        onAddAssetGoal: _handleAddAssetGoal,
+        onUpdateAssetGoal: _handleUpdateAssetGoal,
+        onDeleteAssetGoal: _handleDeleteAssetGoal,
       ),
       TransactionsScreen(
         repository: currentRepository,
         onAddTransaction: _handleAddTransaction,
+        onAddTransactions: _handleAddTransactions,
         onEditTransaction: _handleUpdateTransaction,
         onDeleteTransaction: _handleDeleteTransaction,
         onAddCategory: _handleAddCategory,
@@ -273,6 +299,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onLoadExampleData: _handleLoadExampleData,
         onExportJsonBytes: _handleExportJsonBytes,
         onExportAiSummaryBytes: _handleExportAiSummaryBytes,
+        onExportFuturePlanningBytes: _handleExportFuturePlanningBytes,
         onImportJson: _handleImportJson,
         onPreviewImportJson: _handlePreviewImportJson,
       ),

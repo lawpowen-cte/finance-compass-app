@@ -18,6 +18,7 @@ class SettingsScreen extends StatefulWidget {
     required this.onLoadExampleData,
     required this.onExportJsonBytes,
     required this.onExportAiSummaryBytes,
+    required this.onExportFuturePlanningBytes,
     required this.onImportJson,
     required this.onPreviewImportJson,
   });
@@ -26,6 +27,7 @@ class SettingsScreen extends StatefulWidget {
   final Future<void> Function() onLoadExampleData;
   final Future<Uint8List> Function() onExportJsonBytes;
   final Future<Uint8List> Function() onExportAiSummaryBytes;
+  final Future<Uint8List> Function() onExportFuturePlanningBytes;
   final Future<void> Function(String path) onImportJson;
   final Future<ImportPreview> Function(String path) onPreviewImportJson;
 
@@ -83,6 +85,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('没有完成保存。')));
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$successLabel\n$savedPath\n大小 ${bytes.length} bytes')),
+      );
+    });
+  }
+
+  Future<void> _exportCsv({
+    required String fileName,
+    required Future<Uint8List> Function() bytesBuilder,
+    required String successLabel,
+  }) async {
+    await _runBusyTask(() async {
+      final bytes = await bytesBuilder();
+      if (bytes.isEmpty) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('导出内容为空，未保存文件。')),
+        );
+        return;
+      }
+
+      final savedPath = await FileSaver.instance.saveAs(
+        name: fileName,
+        bytes: bytes,
+        fileExtension: 'csv',
+        mimeType: MimeType.custom,
+        customMimeType: 'text/csv',
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      if (savedPath == null || savedPath.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('没有完成保存。')),
+        );
         return;
       }
 
@@ -273,6 +317,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ),
                         icon: const Icon(Icons.auto_awesome_outlined),
                         label: const Text('导出 AI 摘要'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _isBusy
+                            ? null
+                            : () => _exportCsv(
+                                  fileName: 'finance_compass_future_planning',
+                                  bytesBuilder: widget.onExportFuturePlanningBytes,
+                                  successLabel: '未来规划表已保存到',
+                                ),
+                        icon: const Icon(Icons.table_chart_outlined),
+                        label: const Text('导出未来规划表'),
                       ),
                     ],
                   ),

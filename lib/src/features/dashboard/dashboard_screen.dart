@@ -22,7 +22,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   int? selectedYear = DateTime.now().year;
-  int? selectedMonth;
+  int? selectedMonth = DateTime.now().month;
   String? selectedBudgetMonth;
 
   @override
@@ -34,15 +34,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final latestTransactionDate = transactions.isEmpty ? now : transactions.last.transactionDate;
     final latestMonthDate = DateTime(latestTransactionDate.year, latestTransactionDate.month);
 
-    final years = transactions.map((item) => item.transactionDate.year).toSet().toList()
+    final years = {
+      now.year,
+      ...transactions.map((item) => item.transactionDate.year),
+    }.toList()
       ..sort((a, b) => b.compareTo(a));
     final availableMonthsForYear = selectedYear == null
         ? <int>[]
-        : transactions
-            .where((item) => item.transactionDate.year == selectedYear)
-            .map((item) => item.transactionDate.month)
-            .toSet()
-            .toList()
+        : {
+            if (selectedYear == now.year) now.month,
+            ...transactions
+                .where((item) => item.transactionDate.year == selectedYear)
+                .map((item) => item.transactionDate.month),
+          }.toList()
           ..sort();
 
     if (selectedYear == null && selectedMonth != null) {
@@ -57,9 +61,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final periodAnchorMonth = _resolveAnchorMonth(latestMonthDate);
     final periodStart = _resolvePeriodStart(periodAnchorMonth);
     final periodEnd = _resolvePeriodEnd(periodAnchorMonth);
+    final comparisonStart = DateTime(
+      periodAnchorMonth.year,
+      periodAnchorMonth.month - 2,
+      1,
+    );
     final assetEnd = DateTime(
       periodAnchorMonth.year,
-      periodAnchorMonth.month + 2,
+      periodAnchorMonth.month + 1,
       0,
       23,
       59,
@@ -80,7 +89,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }).toList()
       ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
 
-    final periodMonthKeys = _monthKeysBetween(periodStart, periodEnd)
+    final periodMonthKeys = _monthKeysBetween(comparisonStart, periodEnd)
         .where((monthKey) {
           return repository.totalIncomeForMonth(monthKey) != 0 ||
               repository.totalExpenseForMonth(monthKey) != 0;
@@ -118,8 +127,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final netAssets = settlementCash + settlementInvestment + settlementRetirement;
 
     final budgetMonthKeys = repository.budgetMonthKeys();
-    final defaultBudgetMonth = budgetMonthKeys.contains(monthKeyFromDate(periodAnchorMonth))
-        ? monthKeyFromDate(periodAnchorMonth)
+    final fallbackBudgetMonth = monthKeyFromDate(now);
+    final selectedFilterBudgetMonth = selectedYear != null && selectedMonth != null
+        ? monthKeyFromDate(DateTime(selectedYear!, selectedMonth!))
+        : fallbackBudgetMonth;
+    final defaultBudgetMonth = budgetMonthKeys.contains(selectedFilterBudgetMonth)
+        ? selectedFilterBudgetMonth
+        : budgetMonthKeys.contains(fallbackBudgetMonth)
+            ? fallbackBudgetMonth
         : (budgetMonthKeys.isEmpty ? monthKeyFromDate(now) : budgetMonthKeys.first);
     final activeBudgetMonth = budgetMonthKeys.contains(selectedBudgetMonth)
         ? selectedBudgetMonth!
@@ -211,15 +226,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           crossAxisSpacing: 12,
           childAspectRatio: 1.8,
           children: [
-            _MetricCard(label: '现金余额(含下月)', amount: cashTotal),
-            _MetricCard(label: '信用余额(含下月)', amount: creditTotal, tone: MetricTone.negative),
-            _MetricCard(label: '投资余额(含下月)', amount: investmentTotal),
-            _MetricCard(label: '退休余额(含下月)', amount: retirementTotal),
+            _MetricCard(label: '现金余额', amount: cashTotal),
+            _MetricCard(label: '信用余额', amount: creditTotal, tone: MetricTone.negative),
+            _MetricCard(label: '投资余额', amount: investmentTotal),
+            _MetricCard(label: '退休余额', amount: retirementTotal),
             _MetricCard(label: '期间收入', amount: income, tone: MetricTone.positive),
             _MetricCard(label: '期间支出', amount: expense, tone: MetricTone.negative),
             _MetricCard(label: '期间结余', amount: income - expense),
-            _MetricCard(label: '累计资产(到当月)', amount: totalAssets),
-            _MetricCard(label: '累计净资产(到当月)', amount: netAssets),
+            _MetricCard(label: '累计资产', amount: totalAssets),
+            _MetricCard(label: '累计净资产', amount: netAssets),
           ],
         ),
         const SizedBox(height: 16),
@@ -422,10 +437,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   DateTime _resolveAnchorMonth(DateTime latestMonthDate) {
     if (selectedYear == null) {
-      return latestMonthDate;
+      final now = DateTime.now();
+      return DateTime(now.year, now.month);
     }
     if (selectedMonth == null) {
-      return DateTime(selectedYear!, 12);
+      final now = DateTime.now();
+      return DateTime(now.year, now.month);
     }
     return DateTime(selectedYear!, selectedMonth!);
   }
@@ -467,47 +484,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   double _balanceForAccount(FinanceRepository repository, Account account, DateTime endDate) {
-    if (account.reportGroup == ReportGroup.investment ||
-        account.reportGroup == ReportGroup.retirement) {
-      final snapshots = repository.snapshotsForAccount(account.id);
-      final eligibleSnapshots = snapshots.where(
-        (snapshot) => !snapshot.snapshotDate.isAfter(endDate),
-      );
-      if (eligibleSnapshots.isNotEmpty) {
-        return eligibleSnapshots.last.marketValue;
-      }
-    }
-    return _rewindFromCurrentBalance(repository, account, endDate);
-  }
-
-  double _rewindFromCurrentBalance(
-    FinanceRepository repository,
-    Account account,
-    DateTime endDate,
-  ) {
-    var balance = account.currentBalance;
-    for (final transaction in repository.transactions) {
-      if (!transaction.transactionDate.isAfter(endDate)) {
-        continue;
-      }
-
-      if (transaction.accountId == account.id) {
-        switch (transaction.type) {
-          case TransactionType.income:
-          case TransactionType.adjustment:
-            balance -= transaction.amount;
-          case TransactionType.expense:
-            balance += transaction.amount;
-          case TransactionType.transfer:
-            balance += transaction.amount;
-        }
-      }
-
-      if (transaction.toAccountId == account.id) {
-        balance -= transaction.amount;
-      }
-    }
-    return balance;
+    return repository.accountBalanceAt(account.id, endDate);
   }
 
   ForecastSummary _forecastFromSummaries(

@@ -39,13 +39,36 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cutoffDate = _repository.currentMonthCutoffDate();
     final snapshots = _repository.snapshotsForAccount(widget.account.id);
-    final latestSnapshot = snapshots.isEmpty ? null : snapshots.last;
+    final visibleSnapshots = _repository.snapshotsForAccountUpTo(widget.account.id, cutoffDate);
+    final latestSnapshot = visibleSnapshots.isEmpty ? null : visibleSnapshots.last;
+    final displayedMarketValue = latestSnapshot == null
+        ? 0.0
+        : _repository.accountBalanceAt(widget.account.id, cutoffDate);
+    final displayedCostBasis = latestSnapshot == null
+        ? 0.0
+        : _repository.costBasisForAccount(
+            widget.account.id,
+            upToDate: cutoffDate,
+          );
+    final displayedCashBalance = latestSnapshot == null
+        ? 0.0
+        : _repository.cashBalanceForAccount(
+            widget.account.id,
+            upToDate: cutoffDate,
+          );
+    final displayedRemainingCostBasis = latestSnapshot == null
+        ? 0.0
+        : _repository.remainingCostBasisForAccount(
+            widget.account.id,
+            upToDate: cutoffDate,
+          );
     final latestFlow = latestSnapshot == null
         ? const InvestmentFlowSummary(contribution: 0, withdrawal: 0)
         : _repository.investmentFlowSummaryForAccount(
             widget.account.id,
-            upToDate: latestSnapshot.snapshotDate,
+            upToDate: cutoffDate,
           );
 
     return Stack(
@@ -74,7 +97,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
                               _MetricPill(
                                 label: '总市值',
                                 value: formatMoney(
-                                  latestSnapshot.marketValue,
+                                  displayedMarketValue,
                                   currency: widget.account.currency,
                                 ),
                               ),
@@ -95,31 +118,31 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
                               _MetricPill(
                                 label: '累计成本',
                                 value: formatMoney(
-                                  _repository.snapshotCostBasis(latestSnapshot),
+                                  displayedCostBasis,
                                   currency: widget.account.currency,
                                 ),
                               ),
                               _MetricPill(
                                 label: '现金余额',
                                 value: formatMoney(
-                                  latestSnapshot.cashBalance,
+                                  displayedCashBalance,
                                   currency: widget.account.currency,
                                 ),
                               ),
                               _MetricPill(
                                 label: '未实现盈亏',
-                                value: '${formatMoney(_repository.snapshotUnrealizedPnl(latestSnapshot), currency: widget.account.currency)} '
-                                    '(${(_repository.snapshotPnlRatio(latestSnapshot) * 100).toStringAsFixed(1)}%)',
-                                accent: _repository.snapshotUnrealizedPnl(latestSnapshot) >= 0
+                                value: '${formatMoney(displayedMarketValue - displayedRemainingCostBasis, currency: widget.account.currency)} '
+                                    '(${(displayedRemainingCostBasis == 0 ? 0.0 : ((displayedMarketValue - displayedRemainingCostBasis) / displayedRemainingCostBasis) * 100).toStringAsFixed(1)}%)',
+                                accent: displayedMarketValue - displayedRemainingCostBasis >= 0
                                     ? const Color(0xFF15803D)
                                     : const Color(0xFFB91C1C),
                               ),
                             ],
                           ),
-                          if (snapshots.length > 1) ...[
+                          if (visibleSnapshots.length > 1) ...[
                             const SizedBox(height: 16),
                             MultiLineChart(
-                              series: _buildFlowSeries(snapshots),
+                              series: _buildFlowSeries(visibleSnapshots),
                               amountBuilder: (value) => formatMoney(
                                 value,
                                 currency: widget.account.currency,
@@ -266,7 +289,10 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
         ChartPoint(label: label, value: summary.withdrawal),
       );
       marketValuePoints.add(
-        ChartPoint(label: label, value: snapshot.marketValue),
+        ChartPoint(
+          label: label,
+          value: _repository.accountBalanceAt(snapshot.accountId, snapshot.snapshotDate),
+        ),
       );
     }
 
@@ -335,7 +361,11 @@ class _SnapshotRow extends StatelessWidget {
       snapshot.accountId,
       upToDate: snapshot.snapshotDate,
     );
-    final pnl = repository.snapshotUnrealizedPnl(snapshot);
+    final displayedMarketValue = repository.accountBalanceAt(
+      snapshot.accountId,
+      snapshot.snapshotDate,
+    );
+    final pnl = displayedMarketValue - repository.snapshotRemainingCostBasis(snapshot);
     final ratio = repository.snapshotPnlRatio(snapshot);
 
     return Container(
@@ -373,7 +403,7 @@ class _SnapshotRow extends StatelessWidget {
             spacing: 12,
             runSpacing: 8,
             children: [
-              Text('总市值 ${formatMoney(snapshot.marketValue, currency: currency)}'),
+              Text('总市值 ${formatMoney(displayedMarketValue, currency: currency)}'),
               Text('累计投入 ${formatMoney(flow.contribution, currency: currency)}'),
               Text('累计取出 ${formatMoney(flow.withdrawal, currency: currency)}'),
               Text('累计成本 ${formatMoney(repository.snapshotCostBasis(snapshot), currency: currency)}'),

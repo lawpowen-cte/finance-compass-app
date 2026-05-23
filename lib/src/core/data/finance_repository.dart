@@ -13,6 +13,7 @@ import '../models/category.dart';
 import '../models/forecast_summary.dart';
 import '../models/monthly_summary.dart';
 import '../models/transaction.dart';
+import '../utils/id_generator.dart';
 import '../utils/month_key.dart';
 import 'sample_data.dart';
 
@@ -24,11 +25,13 @@ class FinanceRepository {
     required List<Budget> budgets,
     required List<FinanceTransaction> transactions,
     required List<AssetSnapshot> snapshots,
+    required Map<String, String> metaValues,
   })  : _accounts = accounts,
         _categories = categories,
         _budgets = budgets,
         _transactions = transactions,
-        _snapshots = snapshots;
+        _snapshots = snapshots,
+        _metaValues = metaValues;
 
   final AppDatabase database;
 
@@ -37,6 +40,7 @@ class FinanceRepository {
   final List<Budget> _budgets;
   final List<FinanceTransaction> _transactions;
   final List<AssetSnapshot> _snapshots;
+  final Map<String, String> _metaValues;
 
   static FinanceRepository preview() {
     return FinanceRepository._(
@@ -46,6 +50,7 @@ class FinanceRepository {
       budgets: SampleData.budgets(),
       transactions: SampleData.transactions(),
       snapshots: SampleData.snapshots(),
+      metaValues: const {},
     );
   }
 
@@ -55,6 +60,7 @@ class FinanceRepository {
     final budgets = await database.fetchBudgets();
     final transactions = await database.fetchTransactions();
     final snapshots = await database.fetchAssetSnapshots();
+    final metaValues = await database.fetchAllMetaValues();
 
     return FinanceRepository._(
       database: database,
@@ -63,6 +69,7 @@ class FinanceRepository {
       budgets: budgets,
       transactions: transactions,
       snapshots: snapshots,
+      metaValues: metaValues,
     );
   }
 
@@ -73,17 +80,150 @@ class FinanceRepository {
   List<Budget> get budgets => List.unmodifiable(_budgets);
   List<FinanceTransaction> get transactions => List.unmodifiable(_transactions);
   List<AssetSnapshot> get snapshots => List.unmodifiable(_snapshots);
+  Map<String, String> get metaValues => Map.unmodifiable(_metaValues);
+
+  List<AssetGoal> get assetGoals {
+    final raw = _metaValues['asset_goals_json'];
+    if (raw != null && raw.trim().isNotEmpty) {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return decoded
+            .whereType<Map<String, dynamic>>()
+            .map(AssetGoal.fromJson)
+            .toList()
+          ..sort((a, b) => a.targetAmount.compareTo(b.targetAmount));
+      }
+      if (decoded is List<dynamic>) {
+        return decoded
+            .map((item) => AssetGoal.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList()
+          ..sort((a, b) => a.targetAmount.compareTo(b.targetAmount));
+      }
+    }
+
+    final legacyAmountRaw = _metaValues['asset_goal_amount'];
+    final legacyReachedAtRaw = _metaValues['asset_goal_reached_at'];
+    final legacyAmount = legacyAmountRaw == null ? null : double.tryParse(legacyAmountRaw);
+    if (legacyAmount == null || legacyAmount <= 0) {
+      return const [];
+    }
+    return [
+      AssetGoal(
+        id: 'goal_legacy',
+        name: '总资产目标',
+        targetAmount: legacyAmount,
+        reachedAt: legacyReachedAtRaw == null ? null : DateTime.tryParse(legacyReachedAtRaw),
+      ),
+    ];
+  }
 
   double totalAssetsByGroup(ReportGroup group) {
+    return displayTotalAssetsByGroup(group, cutoffDate: currentMonthCutoffDate());
+  }
+
+  double displayTotalAssetsByGroup(ReportGroup group, {DateTime? cutoffDate}) {
+    final targetDate = cutoffDate ?? currentMonthCutoffDate();
     return _accounts
         .where((account) => account.reportGroup == group)
-        .fold(0, (sum, account) => sum + account.currentBalance);
+        .fold(0.0, (sum, account) => sum + accountBalanceAt(account.id, targetDate));
   }
 
   double totalAssets({bool includeCredit = true}) {
+    return displayTotalAssets(
+      includeCredit: includeCredit,
+      cutoffDate: currentMonthCutoffDate(),
+    );
+  }
+
+  double displayTotalAssets({bool includeCredit = true, DateTime? cutoffDate}) {
+    final targetDate = cutoffDate ?? currentMonthCutoffDate();
     return _accounts
         .where((account) => includeCredit || account.reportGroup != ReportGroup.credit)
-        .fold(0, (sum, account) => sum + account.currentBalance);
+        .fold(0.0, (sum, account) => sum + accountBalanceAt(account.id, targetDate));
+  }
+
+  double totalTargetAssets() {
+    return displayTotalAssets(
+      includeCredit: false,
+      cutoffDate: currentMonthCutoffDate(),
+    );
+  }
+
+  List<AssetGoalHistoryPoint> totalAssetHistory({
+    DateTime? cutoffDate,
+  }) {
+    final targetCutoff = cutoffDate ?? currentMonthCutoffDate();
+    final monthKeys = <String>{
+      monthKeyFromDate(targetCutoff),
+      ..._transactions
+          .where((item) => !item.transactionDate.isAfter(targetCutoff))
+          .map((item) => monthKeyFromDate(item.transactionDate)),
+      ..._snapshots
+          .where((item) => !item.snapshotDate.isAfter(targetCutoff))
+          .map((item) => monthKeyFromDate(item.snapshotDate)),
+    }.toList()
+      ..sort(_compareMonthKeys);
+
+    if (monthKeys.isEmpty) {
+      final now = DateTime.now();
+      return [
+        AssetGoalHistoryPoint(
+          date: now,
+          label: '${now.year}-${now.month.toString().padLeft(2, '0')}',
+          totalAssets: totalTargetAssets(),
+        ),
+      ];
+    }
+
+    return monthKeys.map((monthKey) {
+      final parts = monthKey.split('-');
+      final year = int.parse(parts[0]);
+      final month = int.parse(parts[1]);
+      final isCutoffMonth = monthKey == monthKeyFromDate(targetCutoff);
+      final date = isCutoffMonth ? targetCutoff : DateTime(year, month + 1, 0);
+      return AssetGoalHistoryPoint(
+        date: date,
+        label: monthKey,
+        totalAssets: totalAssetsAt(date, includeCredit: false),
+      );
+    }).toList();
+  }
+
+  List<AssetGoalProgressSummary> assetGoalSummaries({
+    DateTime? cutoffDate,
+  }) {
+    final targetCutoff = cutoffDate ?? currentMonthCutoffDate();
+    final history = totalAssetHistory(cutoffDate: targetCutoff);
+    final currentAssets = totalAssetsAt(targetCutoff, includeCredit: false);
+    final summaries = assetGoals.map((goal) {
+      AssetGoalHistoryPoint? reachedPoint;
+      for (final point in history) {
+        if (point.totalAssets >= goal.targetAmount) {
+          reachedPoint = point;
+          break;
+        }
+      }
+
+      return AssetGoalProgressSummary(
+        goal: goal,
+        currentAssets: currentAssets,
+        reachedAt: reachedPoint?.date ?? goal.reachedAt,
+        history: history,
+      );
+    }).toList();
+
+    summaries.sort((left, right) {
+      if (left.isReached != right.isReached) {
+        return left.isReached ? 1 : -1;
+      }
+      if (left.isReached && right.isReached) {
+        final leftDate = left.reachedAt ?? DateTime(9999);
+        final rightDate = right.reachedAt ?? DateTime(9999);
+        return leftDate.compareTo(rightDate);
+      }
+      return left.goal.targetAmount.compareTo(right.goal.targetAmount);
+    });
+    return summaries;
   }
 
   double expenseTotalForCategory(String categoryId, String monthKey) {
@@ -137,6 +277,11 @@ class FinanceRepository {
     return _accounts.where((item) => item.reportGroup == group).toList();
   }
 
+  double accountBalanceAt(String accountId, DateTime date) {
+    final account = _accounts.firstWhere((item) => item.id == accountId);
+    return _accountBalanceAt(account, date);
+  }
+
   List<Account> investmentAccounts() {
     return _accounts
         .where(
@@ -152,8 +297,24 @@ class FinanceRepository {
     return items.isEmpty ? null : items.first;
   }
 
+  AssetSnapshot? latestSnapshotForAccountUpTo(String accountId, DateTime date) {
+    final items = _snapshots
+        .where((item) => item.accountId == accountId && !item.snapshotDate.isAfter(date))
+        .toList()
+      ..sort((a, b) => b.snapshotDate.compareTo(a.snapshotDate));
+    return items.isEmpty ? null : items.first;
+  }
+
   List<AssetSnapshot> snapshotsForAccount(String accountId) {
     final items = _snapshots.where((item) => item.accountId == accountId).toList()
+      ..sort((a, b) => a.snapshotDate.compareTo(b.snapshotDate));
+    return items;
+  }
+
+  List<AssetSnapshot> snapshotsForAccountUpTo(String accountId, DateTime date) {
+    final items = _snapshots
+        .where((item) => item.accountId == accountId && !item.snapshotDate.isAfter(date))
+        .toList()
       ..sort((a, b) => a.snapshotDate.compareTo(b.snapshotDate));
     return items;
   }
@@ -167,22 +328,23 @@ class FinanceRepository {
     String accountId, {
     DateTime? upToDate,
   }) {
+    final targetDate = upToDate ?? currentMonthCutoffDate();
     final firstSnapshot = firstSnapshotForAccount(accountId);
     if (firstSnapshot == null) {
       return investmentFlowSummaryForAccount(
         accountId,
-        upToDate: upToDate,
+        upToDate: targetDate,
       ).contribution;
     }
 
-    if (upToDate != null && upToDate.isBefore(firstSnapshot.snapshotDate)) {
+    if (targetDate.isBefore(firstSnapshot.snapshotDate)) {
       return firstSnapshot.costBasis;
     }
 
     final deltaFlow = investmentFlowSummaryForAccount(
       accountId,
       fromDateExclusive: firstSnapshot.snapshotDate,
-      upToDate: upToDate,
+      upToDate: targetDate,
     );
     return (firstSnapshot.costBasis + deltaFlow.contribution).clamp(0, double.infinity).toDouble();
   }
@@ -194,17 +356,40 @@ class FinanceRepository {
     );
   }
 
+  double cashBalanceForAccount(
+    String accountId, {
+    DateTime? upToDate,
+  }) {
+    final targetDate = upToDate ?? currentMonthCutoffDate();
+    final account = _accounts.firstWhere((item) => item.id == accountId);
+    final latestSnapshot = latestSnapshotForAccountUpTo(accountId, targetDate);
+    if (latestSnapshot == null) {
+      return _accountBalanceAt(account, targetDate).clamp(0, double.infinity).toDouble();
+    }
+
+    var cashBalance = latestSnapshot.cashBalance;
+    for (final transaction in _transactions) {
+      if (!transaction.transactionDate.isAfter(targetDate) ||
+          !transaction.transactionDate.isAfter(latestSnapshot.snapshotDate)) {
+        continue;
+      }
+      cashBalance -= _cashDeltaForAccount(accountId, transaction);
+    }
+    return cashBalance.clamp(0, double.infinity).toDouble();
+  }
+
   double remainingCostBasisForAccount(
     String accountId, {
     DateTime? upToDate,
   }) {
+    final targetDate = upToDate ?? currentMonthCutoffDate();
     final cumulativeCost = costBasisForAccount(
       accountId,
-      upToDate: upToDate,
+      upToDate: targetDate,
     );
     final flow = investmentFlowSummaryForAccount(
       accountId,
-      upToDate: upToDate,
+      upToDate: targetDate,
     );
     return (cumulativeCost - flow.withdrawal).clamp(0, double.infinity).toDouble();
   }
@@ -226,6 +411,12 @@ class FinanceRepository {
       return 0;
     }
     return snapshotUnrealizedPnl(snapshot) / costBasis;
+  }
+
+  double totalAssetsAt(DateTime date, {bool includeCredit = true}) {
+    return _accounts
+        .where((account) => includeCredit || account.reportGroup != ReportGroup.credit)
+        .fold(0.0, (sum, account) => sum + _accountBalanceAt(account, date));
   }
 
   InvestmentFlowSummary investmentFlowSummaryForAccount(
@@ -425,7 +616,7 @@ class FinanceRepository {
         return effective;
       }
       final spent = expenseTotalForCategory(activeBudget.categoryId, currentMonthKey);
-      carry = activeBudget.rolloverEnabled ? (effective - spent).clamp(0, double.infinity) : 0.0;
+      carry = activeBudget.rolloverEnabled ? (effective - spent) : 0.0;
     }
     return 0;
   }
@@ -508,12 +699,12 @@ class FinanceRepository {
 
   Future<FinanceRepository> addAccount(Account account) async {
     await database.insertAccount(account);
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<FinanceRepository> updateExistingAccount(Account account) async {
     await database.updateAccount(account);
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<bool> canDeleteAccount(String accountId) {
@@ -530,7 +721,7 @@ class FinanceRepository {
 
   Future<FinanceRepository> clearAllData() async {
     await database.clearAllUserData();
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<FinanceRepository> loadExampleData() async {
@@ -541,7 +732,37 @@ class FinanceRepository {
       transactionItems: SampleData.transactions(),
       snapshotItems: SampleData.snapshots(),
     );
-    return refresh();
+    return _refreshWithGoalSync();
+  }
+
+  Future<FinanceRepository> addAssetGoal({
+    required String name,
+    required double amount,
+  }) async {
+    final nextGoals = [
+      ...assetGoals,
+      AssetGoal(
+        id: buildId('goal'),
+        name: name,
+        targetAmount: amount,
+      ),
+    ];
+    await _saveAssetGoals(nextGoals);
+    return _refreshWithGoalSync();
+  }
+
+  Future<FinanceRepository> updateAssetGoal(AssetGoal goal) async {
+    final nextGoals = assetGoals
+        .map((item) => item.id == goal.id ? goal : item)
+        .toList();
+    await _saveAssetGoals(nextGoals);
+    return _refreshWithGoalSync();
+  }
+
+  Future<FinanceRepository> deleteAssetGoal(String goalId) async {
+    final nextGoals = assetGoals.where((item) => item.id != goalId).toList();
+    await _saveAssetGoals(nextGoals);
+    return _refreshWithGoalSync();
   }
 
   Future<Map<String, dynamic>> buildJsonSnapshotPayload() async {
@@ -711,6 +932,84 @@ class FinanceRepository {
     );
   }
 
+  Uint8List exportFuturePlanningCsvBytes({int months = 24}) {
+    final now = DateTime.now();
+    final monthKeys = List.generate(
+      months,
+      (index) => monthKeyFromDate(DateTime(now.year, now.month + index + 1)),
+    );
+
+    final categoryIds = <String>{
+      ...categoriesByType(CategoryType.expense).map((item) => item.id),
+    }.where((categoryId) {
+      final hasBudget = _budgets.any((item) => item.categoryId == categoryId);
+      final hasFutureExpense = monthKeys.any(
+        (monthKey) => expenseTotalForCategory(categoryId, monthKey) != 0,
+      );
+      return hasBudget || hasFutureExpense;
+    }).toList()
+      ..sort((a, b) => categoryName(a).compareTo(categoryName(b)));
+
+    final lines = <List<String>>[];
+    lines.add([
+      'Category',
+      'Base Budget',
+      ...monthKeys,
+      'Planned Total',
+    ]);
+
+    for (final categoryId in categoryIds) {
+      final budget = _budgets
+          .where((item) => item.categoryId == categoryId)
+          .toList()
+        ..sort((a, b) => _compareMonthKeys(b.monthKey, a.monthKey));
+      final baseBudget = budget.isEmpty ? 0.0 : budget.first.amount;
+      final monthValues = monthKeys
+          .map((monthKey) => expenseTotalForCategory(categoryId, monthKey))
+          .toList();
+      final plannedTotal = monthValues.fold<double>(0, (sum, item) => sum + item);
+      lines.add([
+        categoryName(categoryId),
+        _csvMoney(baseBudget),
+        ...monthValues.map(_csvMoney),
+        _csvMoney(plannedTotal),
+      ]);
+    }
+
+    final monthlyTotals = monthKeys
+        .map(
+          (monthKey) => categoryIds.fold<double>(
+            0,
+            (sum, categoryId) => sum + expenseTotalForCategory(categoryId, monthKey),
+          ),
+        )
+        .toList();
+    final monthlyBudgets = monthKeys
+        .map(
+          (monthKey) => activeBudgetsForMonth(monthKey).fold<double>(
+            0,
+            (sum, budget) => sum + effectiveBudgetForMonth(budget, monthKey),
+          ),
+        )
+        .toList();
+
+    lines.add([
+      'Total Planned',
+      '',
+      ...monthlyTotals.map(_csvMoney),
+      _csvMoney(monthlyTotals.fold<double>(0, (sum, item) => sum + item)),
+    ]);
+    lines.add([
+      'Total Budget',
+      '',
+      ...monthlyBudgets.map(_csvMoney),
+      _csvMoney(monthlyBudgets.fold<double>(0, (sum, item) => sum + item)),
+    ]);
+
+    final csv = lines.map((row) => row.map(_csvEscape).join(',')).join('\n');
+    return Uint8List.fromList(utf8.encode(csv));
+  }
+
   Future<String> exportAiSummaryJson(String targetPath, {required List<String> monthKeys}) async {
     final payload = buildAiSummaryPayload(monthKeys: monthKeys);
     final file = File(targetPath);
@@ -830,12 +1129,12 @@ class FinanceRepository {
 
   Future<FinanceRepository> addCategory(Category category) async {
     await database.insertCategory(category);
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<FinanceRepository> updateExistingCategory(Category category) async {
     await database.updateCategory(category);
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<bool> canDeleteCategory(String categoryId) {
@@ -852,42 +1151,50 @@ class FinanceRepository {
 
   Future<FinanceRepository> addBudget(Budget budget) async {
     await database.upsertBudget(budget);
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<FinanceRepository> deleteExistingBudget(String budgetId) async {
     await database.deleteBudget(budgetId);
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<FinanceRepository> addTransaction(FinanceTransaction transaction) async {
     await database.insertTransaction(transaction);
-    return refresh();
+    return _refreshWithGoalSync();
+  }
+
+  Future<FinanceRepository> addTransactions(List<FinanceTransaction> transactions) async {
+    if (transactions.isEmpty) {
+      return refresh();
+    }
+    await database.insertTransactions(transactions);
+    return _refreshWithGoalSync();
   }
 
   Future<FinanceRepository> updateExistingTransaction(FinanceTransaction transaction) async {
     await database.updateTransaction(transaction);
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<FinanceRepository> deleteExistingTransaction(String transactionId) async {
     await database.deleteTransaction(transactionId);
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<FinanceRepository> addAssetSnapshot(AssetSnapshot snapshot) async {
     await database.insertAssetSnapshot(snapshot);
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<FinanceRepository> updateExistingAssetSnapshot(AssetSnapshot snapshot) async {
     await database.updateAssetSnapshot(snapshot);
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<FinanceRepository> deleteExistingAssetSnapshot(String snapshotId) async {
     await database.deleteAssetSnapshot(snapshotId);
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   String _monthKey(DateTime date) {
@@ -954,6 +1261,129 @@ class FinanceRepository {
         .replaceAll('.', '-');
     return p.join(directory.path, 'finance_compass_export_$timestamp.json');
   }
+
+  Future<FinanceRepository> _refreshWithGoalSync() async {
+    final refreshed = await refresh();
+    await refreshed._syncAssetGoalReachedAt();
+    return FinanceRepository.load(database);
+  }
+
+  Future<void> _syncAssetGoalReachedAt() async {
+    if (assetGoals.isEmpty) {
+      await database.deleteMetaValue('asset_goals_json');
+      await database.deleteMetaValue('asset_goal_amount');
+      await database.deleteMetaValue('asset_goal_reached_at');
+      return;
+    }
+    final syncedGoals = assetGoalSummaries(cutoffDate: currentMonthCutoffDate())
+        .map(
+          (summary) => summary.goal.copyWith(
+            reachedAt: summary.reachedAt == null
+                ? null
+                : DateTime(
+                    summary.reachedAt!.year,
+                    summary.reachedAt!.month,
+                    summary.reachedAt!.day,
+                  ),
+          ),
+        )
+        .toList();
+    await _saveAssetGoals(syncedGoals);
+    await database.deleteMetaValue('asset_goal_amount');
+    await database.deleteMetaValue('asset_goal_reached_at');
+  }
+
+  Future<void> _saveAssetGoals(List<AssetGoal> goals) async {
+    if (goals.isEmpty) {
+      await database.deleteMetaValue('asset_goals_json');
+      return;
+    }
+    await database.setMetaValue(
+      'asset_goals_json',
+      jsonEncode(goals.map((item) => item.toJson()).toList()),
+    );
+  }
+
+  double _accountBalanceAt(Account account, DateTime date) {
+    final accountSnapshots = snapshotsForAccount(account.id);
+    AssetSnapshot? latestSnapshotBeforeDate;
+    for (final snapshot in accountSnapshots) {
+      if (!snapshot.snapshotDate.isAfter(date)) {
+        latestSnapshotBeforeDate = snapshot;
+      }
+    }
+
+    if (latestSnapshotBeforeDate != null) {
+      var balance = latestSnapshotBeforeDate.marketValue;
+      for (final transaction in _transactions) {
+        if (!transaction.transactionDate.isAfter(date) ||
+            !transaction.transactionDate.isAfter(latestSnapshotBeforeDate.snapshotDate)) {
+          continue;
+        }
+        balance -= _transactionDeltaForAccount(account.id, transaction);
+      }
+      return balance;
+    }
+
+    var balance = account.currentBalance;
+    for (final transaction in _transactions) {
+      if (transaction.transactionDate.isAfter(date)) {
+        balance -= _transactionDeltaForAccount(account.id, transaction);
+      }
+    }
+    return balance;
+  }
+
+  double _transactionDeltaForAccount(String accountId, FinanceTransaction transaction) {
+    switch (transaction.type) {
+      case TransactionType.income:
+        return transaction.accountId == accountId ? transaction.amount : 0;
+      case TransactionType.expense:
+        return transaction.accountId == accountId ? -transaction.amount : 0;
+      case TransactionType.adjustment:
+        return transaction.accountId == accountId ? transaction.amount : 0;
+      case TransactionType.transfer:
+        if (transaction.accountId == accountId) {
+          return -transaction.amount;
+        }
+        if (transaction.toAccountId == accountId) {
+          return transaction.amount;
+        }
+        return 0;
+    }
+  }
+
+  double _cashDeltaForAccount(String accountId, FinanceTransaction transaction) {
+    switch (transaction.type) {
+      case TransactionType.adjustment:
+        return transaction.accountId == accountId ? transaction.amount : 0;
+      case TransactionType.transfer:
+        if (transaction.accountId == accountId) {
+          return -transaction.amount;
+        }
+        if (transaction.toAccountId == accountId) {
+          return transaction.amount;
+        }
+        return 0;
+      case TransactionType.income:
+      case TransactionType.expense:
+        return 0;
+    }
+  }
+
+  String _csvMoney(double value) => value == 0 ? '' : value.toStringAsFixed(2);
+
+  String _csvEscape(String value) {
+    if (value.contains(',') || value.contains('"') || value.contains('\n')) {
+      return '"${value.replaceAll('"', '""')}"';
+    }
+    return value;
+  }
+
+  DateTime currentMonthCutoffDate() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month + 1, 0, 23, 59, 59, 999);
+  }
 }
 
 class ImportPreview {
@@ -984,4 +1414,88 @@ class InvestmentFlowSummary {
   final double withdrawal;
 
   double get netContribution => contribution - withdrawal;
+}
+
+class AssetGoalHistoryPoint {
+  const AssetGoalHistoryPoint({
+    required this.date,
+    required this.label,
+    required this.totalAssets,
+  });
+
+  final DateTime date;
+  final String label;
+  final double totalAssets;
+}
+
+class AssetGoal {
+  const AssetGoal({
+    required this.id,
+    required this.name,
+    required this.targetAmount,
+    this.reachedAt,
+  });
+
+  final String id;
+  final String name;
+  final double targetAmount;
+  final DateTime? reachedAt;
+
+  AssetGoal copyWith({
+    String? id,
+    String? name,
+    double? targetAmount,
+    DateTime? reachedAt,
+    bool clearReachedAt = false,
+  }) {
+    return AssetGoal(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      targetAmount: targetAmount ?? this.targetAmount,
+      reachedAt: clearReachedAt ? null : (reachedAt ?? this.reachedAt),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'target_amount': targetAmount,
+        'reached_at': reachedAt?.toIso8601String(),
+      };
+
+  factory AssetGoal.fromJson(Map<String, dynamic> json) {
+    return AssetGoal(
+      id: json['id'] as String,
+      name: json['name'] as String? ?? '资产目标',
+      targetAmount: (json['target_amount'] as num).toDouble(),
+      reachedAt: json['reached_at'] == null
+          ? null
+          : DateTime.tryParse(json['reached_at'] as String),
+    );
+  }
+}
+
+class AssetGoalProgressSummary {
+  const AssetGoalProgressSummary({
+    required this.goal,
+    required this.currentAssets,
+    required this.reachedAt,
+    required this.history,
+  });
+
+  final AssetGoal goal;
+  final double currentAssets;
+  final DateTime? reachedAt;
+  final List<AssetGoalHistoryPoint> history;
+
+  double get progressRatio {
+    if (goal.targetAmount <= 0) {
+      return 0;
+    }
+    return currentAssets / goal.targetAmount;
+  }
+
+  bool get isReached {
+    return goal.targetAmount > 0 && currentAssets >= goal.targetAmount;
+  }
 }

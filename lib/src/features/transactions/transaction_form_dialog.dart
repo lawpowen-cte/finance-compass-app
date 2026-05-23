@@ -33,6 +33,9 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
   String? accountId;
   String? toAccountId;
   String? categoryId;
+  int recurrenceMonths = 1;
+
+  bool get _isEditing => widget.initialTransaction != null;
 
   @override
   void initState() {
@@ -74,7 +77,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     final categoryOptions = _categoryOptions();
 
     return AlertDialog(
-      title: Text(widget.initialTransaction == null ? '新增交易' : '编辑交易'),
+      title: Text(_isEditing ? '编辑交易' : '新增交易'),
       content: SizedBox(
         width: 460,
         child: Form(
@@ -194,6 +197,37 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                     child: const Text('修改'),
                   ),
                 ),
+                if (!_isEditing) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    initialValue: recurrenceMonths,
+                    decoration: const InputDecoration(
+                      labelText: '生成周期',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: List.generate(
+                      12,
+                      (index) => DropdownMenuItem<int>(
+                        value: index + 1,
+                        child: Text('${index + 1} 个月'),
+                      ),
+                    ),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() => recurrenceMonths = value);
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '会从当前日期开始，按月生成未来 $recurrenceMonths 个月的记录，包含当前这笔。',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 FinanceTextField(controller: descriptionController, label: '说明'),
                 const SizedBox(height: 12),
@@ -312,20 +346,50 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
       return;
     }
 
-    Navigator.of(context).pop(
-      FinanceTransaction(
-        id: widget.initialTransaction?.id ?? buildId('txn'),
+    final amount = double.parse(amountController.text.trim());
+    final currency = currencyController.text.trim().toUpperCase();
+    final description = _nullIfEmpty(descriptionController.text);
+    final merchant = _nullIfEmpty(merchantController.text);
+
+    if (_isEditing) {
+      Navigator.of(context).pop(
+        TransactionFormResult(
+          transactions: [
+            FinanceTransaction(
+              id: widget.initialTransaction!.id,
+              type: transactionType,
+              accountId: accountId!,
+              toAccountId: toAccountId,
+              categoryId: categoryId,
+              amount: amount,
+              currency: currency,
+              transactionDate: transactionDate,
+              description: description,
+              merchant: merchant,
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final transactions = buildRecurringTransactions(
+      months: recurrenceMonths,
+      baseTransaction: FinanceTransaction(
+        id: buildId('txn'),
         type: transactionType,
         accountId: accountId!,
         toAccountId: toAccountId,
         categoryId: categoryId,
-        amount: double.parse(amountController.text.trim()),
-        currency: currencyController.text.trim().toUpperCase(),
+        amount: amount,
+        currency: currency,
         transactionDate: transactionDate,
-        description: _nullIfEmpty(descriptionController.text),
-        merchant: _nullIfEmpty(merchantController.text),
+        description: description,
+        merchant: merchant,
       ),
     );
+
+    Navigator.of(context).pop(TransactionFormResult(transactions: transactions));
   }
 
   String _typeLabel(TransactionType type) {
@@ -360,4 +424,40 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
       double.tryParse(value ?? '') == null ? '请输入数字' : null;
 
   String? _nullIfEmpty(String value) => value.trim().isEmpty ? null : value.trim();
+}
+
+class TransactionFormResult {
+  const TransactionFormResult({
+    required this.transactions,
+  });
+
+  final List<FinanceTransaction> transactions;
+}
+
+List<FinanceTransaction> buildRecurringTransactions({
+  required FinanceTransaction baseTransaction,
+  required int months,
+}) {
+  final safeMonths = months < 1 ? 1 : months;
+  final idPrefix = baseTransaction.id;
+
+  return List.generate(safeMonths, (index) {
+    final date = DateTime(
+      baseTransaction.transactionDate.year,
+      baseTransaction.transactionDate.month + index,
+      baseTransaction.transactionDate.day,
+    );
+    return FinanceTransaction(
+      id: '$idPrefix-${index + 1}',
+      type: baseTransaction.type,
+      accountId: baseTransaction.accountId,
+      toAccountId: baseTransaction.toAccountId,
+      categoryId: baseTransaction.categoryId,
+      amount: baseTransaction.amount,
+      currency: baseTransaction.currency,
+      transactionDate: date,
+      description: baseTransaction.description,
+      merchant: baseTransaction.merchant,
+    );
+  });
 }

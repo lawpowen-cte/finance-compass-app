@@ -11,7 +11,7 @@ import 'account_detail_screen.dart';
 import 'account_form_dialog.dart';
 import 'asset_snapshot_form_dialog.dart';
 
-class AccountsScreen extends StatelessWidget {
+class AccountsScreen extends StatefulWidget {
   const AccountsScreen({
     super.key,
     required this.repository,
@@ -21,6 +21,9 @@ class AccountsScreen extends StatelessWidget {
     required this.onAddSnapshot,
     required this.onEditSnapshot,
     required this.onDeleteSnapshot,
+    required this.onAddAssetGoal,
+    required this.onUpdateAssetGoal,
+    required this.onDeleteAssetGoal,
   });
 
   final FinanceRepository repository;
@@ -30,10 +33,32 @@ class AccountsScreen extends StatelessWidget {
   final Future<void> Function(AssetSnapshot snapshot) onAddSnapshot;
   final Future<FinanceRepository> Function(AssetSnapshot snapshot) onEditSnapshot;
   final Future<FinanceRepository> Function(String snapshotId) onDeleteSnapshot;
+  final Future<void> Function(String name, double amount) onAddAssetGoal;
+  final Future<void> Function(AssetGoal goal) onUpdateAssetGoal;
+  final Future<void> Function(String goalId) onDeleteAssetGoal;
+
+  @override
+  State<AccountsScreen> createState() => _AccountsScreenState();
+}
+
+class _AccountsScreenState extends State<AccountsScreen> {
+  String? selectedCutoffMonth = _currentMonthKey();
 
   @override
   Widget build(BuildContext context) {
     const groups = ReportGroup.values;
+    final repository = widget.repository;
+    final monthKeys = <String>{
+      _currentMonthKey(),
+      ...repository.transactions.map((item) => _monthKey(item.transactionDate)),
+      ...repository.snapshots.map((item) => _monthKey(item.snapshotDate)),
+    }.toList()
+      ..sort((a, b) => b.compareTo(a));
+    final effectiveCutoffMonth =
+        monthKeys.contains(selectedCutoffMonth) ? selectedCutoffMonth! : _currentMonthKey();
+    final displayCutoff = _endOfMonth(effectiveCutoffMonth);
+    final goalSummaries = repository.assetGoalSummaries(cutoffDate: displayCutoff);
+    final goalHistory = repository.totalAssetHistory(cutoffDate: displayCutoff);
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -41,6 +66,12 @@ class AccountsScreen extends StatelessWidget {
         ScreenHeader(
           title: '账户',
           actions: [
+            IconButton.filledTonal(
+              onPressed: () => _showGoalDialog(context),
+              icon: const Icon(Icons.flag_outlined),
+              tooltip: '资产目标',
+            ),
+            const SizedBox(width: 8),
             IconButton.filledTonal(
               onPressed: () => _showAddAccount(context),
               icon: const Icon(Icons.add_card),
@@ -55,24 +86,115 @@ class AccountsScreen extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
+        SectionCard(
+          title: '统计截止',
+          child: DropdownButtonFormField<String>(
+            initialValue: effectiveCutoffMonth,
+            decoration: const InputDecoration(
+              labelText: '截至月份',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            items: monthKeys
+                .map(
+                  (monthKey) => DropdownMenuItem<String>(
+                    value: monthKey,
+                    child: Text(monthKey),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value == null) {
+                return;
+              }
+              setState(() => selectedCutoffMonth = value);
+            },
+          ),
+        ),
+        const SizedBox(height: 16),
         Wrap(
           spacing: 12,
           runSpacing: 12,
           children: [
             _SummaryChip(
               label: '总资产',
-              value: formatMoney(repository.totalAssets()),
+              value: formatMoney(
+                repository.displayTotalAssets(cutoffDate: displayCutoff),
+              ),
             ),
             _SummaryChip(
               label: '净资产',
-              value: formatMoney(repository.totalAssets(includeCredit: false)),
+              value: formatMoney(
+                repository.displayTotalAssets(
+                  includeCredit: false,
+                  cutoffDate: displayCutoff,
+                ),
+              ),
             ),
           ],
         ),
         const SizedBox(height: 16),
+        SectionCard(
+          title: '资产目标',
+          subtitle: goalSummaries.isEmpty ? '设定目标后会自动记录首次达成日期。' : '支持同时追踪多个总资产目标。',
+          child: goalSummaries.isEmpty
+              ? Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => _showGoalDialog(context),
+                    icon: const Icon(Icons.flag_outlined),
+                    label: const Text('新增资产目标'),
+                  ),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: FilledButton.tonalIcon(
+                        onPressed: () => _showGoalDialog(context),
+                        icon: const Icon(Icons.add),
+                        label: const Text('新增目标'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    if (goalHistory.isNotEmpty) ...[
+                      SimpleLineChart(
+                        points: goalHistory
+                            .map(
+                              (point) => ChartPoint(
+                                label: point.label.substring(2),
+                                value: point.totalAssets,
+                              ),
+                            )
+                            .toList(),
+                        amountBuilder: formatMoneyValue,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    ...goalSummaries.map(
+                      (summary) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _GoalCard(
+                          summary: summary,
+                          onEdit: () => _showGoalDialog(
+                            context,
+                            initialGoal: summary.goal,
+                          ),
+                          onDelete: () => _deleteGoal(context, summary.goal),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+        const SizedBox(height: 16),
         ...groups.map((group) {
           final accounts = repository.accountsByGroup(group);
-          final groupTotal = repository.totalAssetsByGroup(group);
+          final groupTotal = repository.displayTotalAssetsByGroup(
+            group,
+            cutoffDate: displayCutoff,
+          );
           return Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: SectionCard(
@@ -91,13 +213,26 @@ class AccountsScreen extends StatelessWidget {
                   final topCategory = sortedEntries.isEmpty
                       ? '本月暂无支出'
                       : '${repository.categoryName(sortedEntries.first.key)} ${formatMoney(sortedEntries.first.value)}';
-                  final latestSnapshot = repository.latestSnapshotForAccount(account.id);
-                  final latestFlow = latestSnapshot == null
-                      ? const InvestmentFlowSummary(contribution: 0, withdrawal: 0)
-                      : repository.investmentFlowSummaryForAccount(
-                          account.id,
-                          upToDate: latestSnapshot.snapshotDate,
-                        );
+                  final latestSnapshot = repository.latestSnapshotForAccountUpTo(
+                    account.id,
+                    displayCutoff,
+                  );
+                  final displayedMarketValue = repository.accountBalanceAt(
+                    account.id,
+                    displayCutoff,
+                  );
+                  final displayedCostBasis = repository.costBasisForAccount(
+                    account.id,
+                    upToDate: displayCutoff,
+                  );
+                  final displayedCashBalance = repository.cashBalanceForAccount(
+                    account.id,
+                    upToDate: displayCutoff,
+                  );
+                  final displayedFlow = repository.investmentFlowSummaryForAccount(
+                    account.id,
+                    upToDate: displayCutoff,
+                  );
 
                   return InkWell(
                     borderRadius: BorderRadius.circular(16),
@@ -106,8 +241,8 @@ class AccountsScreen extends StatelessWidget {
                         builder: (_) => AccountDetailScreen(
                           account: account,
                           repository: repository,
-                          onEditSnapshot: onEditSnapshot,
-                          onDeleteSnapshot: onDeleteSnapshot,
+                          onEditSnapshot: widget.onEditSnapshot,
+                          onDeleteSnapshot: widget.onDeleteSnapshot,
                         ),
                       ),
                     ),
@@ -129,7 +264,7 @@ class AccountsScreen extends StatelessWidget {
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      '${_accountTypeLabel(account.accountType)} · $topCategory',
+                                      '${_accountTypeLabel(account.accountType)} 路 $topCategory',
                                       style: Theme.of(context).textTheme.bodySmall,
                                     ),
                                   ],
@@ -140,7 +275,10 @@ class AccountsScreen extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
                                   Text(
-                                    formatMoney(account.currentBalance, currency: account.currency),
+                                    formatMoney(
+                                      displayedMarketValue,
+                                      currency: account.currency,
+                                    ),
                                     style: Theme.of(context).textTheme.titleSmall,
                                   ),
                                   PopupMenuButton<String>(
@@ -166,12 +304,19 @@ class AccountsScreen extends StatelessWidget {
                             const SizedBox(height: 12),
                             _SnapshotSummary(
                               snapshot: latestSnapshot,
-                              repository: repository,
                               currency: account.currency,
-                              flowSummary: latestFlow,
+                              displayedMarketValue: displayedMarketValue,
+                              displayedCostBasis: displayedCostBasis,
+                              displayedCashBalance: displayedCashBalance,
+                              flowSummary: displayedFlow,
                               trendValues: repository
-                                  .snapshotsForAccount(account.id)
-                                  .map((item) => item.marketValue)
+                                  .snapshotsForAccountUpTo(account.id, displayCutoff)
+                                  .map(
+                                    (item) => repository.accountBalanceAt(
+                                      account.id,
+                                      item.snapshotDate,
+                                    ),
+                                  )
                                   .toList(),
                             ),
                           ],
@@ -179,7 +324,10 @@ class AccountsScreen extends StatelessWidget {
                             const SizedBox(height: 12),
                             Divider(
                               height: 1,
-                              color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.55),
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .outlineVariant
+                                  .withValues(alpha: 0.55),
                             ),
                           ],
                         ],
@@ -195,10 +343,166 @@ class AccountsScreen extends StatelessWidget {
     );
   }
 
-  String _currentMonthKey() {
+  Future<void> _showGoalDialog(
+    BuildContext context, {
+    AssetGoal? initialGoal,
+  }) async {
+    final nameController = TextEditingController(text: initialGoal?.name ?? '');
+    final amountController = TextEditingController(
+      text: initialGoal == null ? '' : initialGoal.targetAmount.toStringAsFixed(2),
+    );
+    final result = await showDialog<_GoalDraft?>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(initialGoal == null ? '新增资产目标' : '编辑资产目标'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: '目标名称',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: amountController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: '目标金额',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(context).pop(
+                _GoalDraft(
+                  name: nameController.text.trim(),
+                  amount: double.tryParse(amountController.text.trim()),
+                ),
+              );
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+
+    if (!context.mounted || result == null) {
+      return;
+    }
+    if (result.name.isEmpty || result.amount == null || result.amount! <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请输入目标名称和有效金额')),
+      );
+      return;
+    }
+    if (initialGoal == null) {
+      await widget.onAddAssetGoal(result.name, result.amount!);
+      return;
+    }
+    await widget.onUpdateAssetGoal(
+      initialGoal.copyWith(
+        name: result.name,
+        targetAmount: result.amount!,
+      ),
+    );
+  }
+
+  Future<void> _deleteGoal(BuildContext context, AssetGoal goal) async {
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('删除资产目标'),
+            content: Text('确定删除“${goal.name}”吗？'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('删除'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!context.mounted || !confirmed) {
+      return;
+    }
+    await widget.onDeleteAssetGoal(goal.id);
+  }
+
+  Future<void> _showAddAccount(BuildContext context) async {
+    final result = await showDialog<Account>(
+      context: context,
+      builder: (_) => const AccountFormDialog(),
+    );
+    if (!context.mounted || result == null) {
+      return;
+    }
+    await widget.onAddAccount(result);
+  }
+
+  Future<void> _showAddSnapshot(BuildContext context) async {
+    final result = await showDialog<AssetSnapshot>(
+      context: context,
+      builder: (_) => AssetSnapshotFormDialog(repository: widget.repository),
+    );
+    if (!context.mounted || result == null) {
+      return;
+    }
+    await widget.onAddSnapshot(result);
+  }
+
+  Future<void> _showEditAccount(BuildContext context, Account account) async {
+    final result = await showDialog<Account>(
+      context: context,
+      builder: (_) => AccountFormDialog(initialAccount: account),
+    );
+    if (!context.mounted || result == null) {
+      return;
+    }
+    await widget.onEditAccount(result);
+  }
+
+  Future<void> _attemptDeleteAccount(BuildContext context, Account account) async {
+    final deleted = await widget.onDeleteAccount(account.id);
+    if (!context.mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          deleted ? '已删除 ${account.name}' : '${account.name} 有关联数据，不能删除',
+        ),
+      ),
+    );
+  }
+
+  static String _currentMonthKey() {
     final now = DateTime.now();
-    final month = now.month.toString().padLeft(2, '0');
-    return '${now.year}-$month';
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}';
+  }
+
+  String _monthKey(DateTime date) {
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}';
+  }
+
+  DateTime _endOfMonth(String monthKey) {
+    final parts = monthKey.split('-');
+    final year = int.parse(parts[0]);
+    final month = int.parse(parts[1]);
+    return DateTime(year, month + 1, 0, 23, 59, 59, 999);
   }
 
   String _groupLabel(ReportGroup group) {
@@ -240,81 +544,130 @@ class AccountsScreen extends StatelessWidget {
         return '其他';
     }
   }
+}
 
-  Future<void> _showAddAccount(BuildContext context) async {
-    final result = await showDialog<Account>(
-      context: context,
-      builder: (_) => const AccountFormDialog(),
-    );
-    if (!context.mounted) {
-      return;
-    }
-    if (result != null) {
-      await onAddAccount(result);
-    }
-  }
+class _GoalCard extends StatelessWidget {
+  const _GoalCard({
+    required this.summary,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
-  Future<void> _showAddSnapshot(BuildContext context) async {
-    final result = await showDialog<AssetSnapshot>(
-      context: context,
-      builder: (_) => AssetSnapshotFormDialog(repository: repository),
-    );
-    if (!context.mounted) {
-      return;
-    }
-    if (result != null) {
-      await onAddSnapshot(result);
-    }
-  }
+  final AssetGoalProgressSummary summary;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
-  Future<void> _showEditAccount(BuildContext context, Account account) async {
-    final result = await showDialog<Account>(
-      context: context,
-      builder: (_) => AccountFormDialog(initialAccount: account),
-    );
-    if (!context.mounted) {
-      return;
-    }
-    if (result != null) {
-      await onEditAccount(result);
-    }
-  }
-
-  Future<void> _attemptDeleteAccount(BuildContext context, Account account) async {
-    final deleted = await onDeleteAccount(account.id);
-    if (!context.mounted) {
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          deleted ? '已删除 ${account.name}' : '${account.name} 有关联数据，不能删除',
-        ),
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.74),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      summary.goal.name,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      summary.reachedAt == null
+                          ? '目标进行中'
+                          : '达成于 ${summary.reachedAt!.year}-${summary.reachedAt!.month.toString().padLeft(2, '0')}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: onEdit,
+                icon: const Icon(Icons.edit_outlined),
+                tooltip: '编辑',
+              ),
+              IconButton(
+                onPressed: onDelete,
+                icon: const Icon(Icons.delete_outline),
+                tooltip: '删除',
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              _MetricChip(
+                label: '目标金额',
+                value: formatMoney(summary.goal.targetAmount),
+              ),
+              _MetricChip(
+                label: '当前总资产',
+                value: formatMoney(summary.currentAssets),
+              ),
+              _MetricChip(
+                label: '达成进度',
+                value: '${(summary.progressRatio * 100).toStringAsFixed(1)}%',
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 10,
+              value: summary.progressRatio.clamp(0, 1),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
+class _GoalDraft {
+  const _GoalDraft({
+    required this.name,
+    required this.amount,
+  });
+
+  final String name;
+  final double? amount;
+}
+
 class _SnapshotSummary extends StatelessWidget {
   const _SnapshotSummary({
     required this.snapshot,
-    required this.repository,
     required this.currency,
     required this.flowSummary,
+    required this.displayedMarketValue,
+    required this.displayedCostBasis,
+    required this.displayedCashBalance,
     required this.trendValues,
   });
 
   final AssetSnapshot snapshot;
-  final FinanceRepository repository;
   final String currency;
   final InvestmentFlowSummary flowSummary;
+  final double displayedMarketValue;
+  final double displayedCostBasis;
+  final double displayedCashBalance;
   final List<double> trendValues;
 
   @override
   Widget build(BuildContext context) {
-    final pnl = repository.snapshotUnrealizedPnl(snapshot);
-    final ratio = repository.snapshotPnlRatio(snapshot);
+    final remainingCostBasis =
+        (displayedCostBasis - flowSummary.withdrawal).clamp(0, double.infinity).toDouble();
+    final pnl = displayedMarketValue - remainingCostBasis;
+    final ratio = remainingCostBasis == 0 ? 0.0 : pnl / remainingCostBasis;
     final pnlColor = pnl >= 0 ? const Color(0xFF15803D) : const Color(0xFFB91C1C);
 
     return Container(
@@ -336,11 +689,11 @@ class _SnapshotSummary extends StatelessWidget {
             spacing: 14,
             runSpacing: 8,
             children: [
-              Text('总市值 ${formatMoney(snapshot.marketValue, currency: currency)}'),
+              Text('总市值 ${formatMoney(displayedMarketValue, currency: currency)}'),
               Text('累计投入 ${formatMoney(flowSummary.contribution, currency: currency)}'),
               Text('累计取出 ${formatMoney(flowSummary.withdrawal, currency: currency)}'),
-              Text('净投入 ${formatMoney(flowSummary.netContribution, currency: currency)}'),
-              Text('现金余额 ${formatMoney(snapshot.cashBalance, currency: currency)}'),
+              Text('累计成本 ${formatMoney(displayedCostBasis, currency: currency)}'),
+              Text('现金余额 ${formatMoney(displayedCashBalance, currency: currency)}'),
               Text(
                 '未实现盈亏 ${formatMoney(pnl, currency: currency)} (${(ratio * 100).toStringAsFixed(1)}%)',
                 style: TextStyle(color: pnlColor, fontWeight: FontWeight.w700),
@@ -376,9 +729,7 @@ class _SummaryChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor.withValues(alpha: 0.8),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: Theme.of(context).cardColor,
-        ),
+        border: Border.all(color: Theme.of(context).cardColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -386,6 +737,36 @@ class _SummaryChip extends StatelessWidget {
           Text(label, style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 4),
           Text(value, style: Theme.of(context).textTheme.titleMedium),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricChip extends StatelessWidget {
+  const _MetricChip({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 4),
+          Text(value, style: Theme.of(context).textTheme.titleSmall),
         ],
       ),
     );

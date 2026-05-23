@@ -177,6 +177,10 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  Future<void> deleteMetaValue(String keyValue) {
+    return (delete(appMeta)..where((tbl) => tbl.key.equals(keyValue))).go();
+  }
+
   Future<void> seedAll({
     required List<model.Account> accountItems,
     required List<model.Category> categoryItems,
@@ -491,6 +495,28 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
+  Future<void> insertTransactions(List<model.FinanceTransaction> entries) async {
+    await super.transaction(() async {
+      for (final entry in entries) {
+        await into(transactions).insert(
+          TransactionsCompanion.insert(
+            id: entry.id,
+            type: entry.type.name,
+            accountId: entry.accountId,
+            amount: entry.amount,
+            currency: entry.currency,
+            transactionDate: entry.transactionDate,
+            toAccountId: Value(entry.toAccountId),
+            categoryId: Value(entry.categoryId),
+            description: Value(entry.description),
+            merchant: Value(entry.merchant),
+          ),
+        );
+        await _applyTransactionToBalances(entry);
+      }
+    });
+  }
+
   Future<void> updateTransaction(model.FinanceTransaction entry) async {
     await super.transaction(() async {
       final existing = await (select(transactions)..where((tbl) => tbl.id.equals(entry.id))).getSingle();
@@ -643,7 +669,7 @@ class AppDatabase extends _$AppDatabase {
         return;
       case model.TransactionType.adjustment:
         await _incrementAccountBalance(transaction.accountId, transaction.amount);
-        await _syncAdjustmentIntoSnapshot(
+        await _syncInvestmentFlowIntoSnapshot(
           accountId: transaction.accountId,
           delta: transaction.amount,
           transactionDate: transaction.transactionDate,
@@ -654,8 +680,18 @@ class AppDatabase extends _$AppDatabase {
         return;
       case model.TransactionType.transfer:
         await _incrementAccountBalance(transaction.accountId, -transaction.amount);
+        await _syncInvestmentFlowIntoSnapshot(
+          accountId: transaction.accountId,
+          delta: -transaction.amount,
+          transactionDate: transaction.transactionDate,
+        );
         if (transaction.toAccountId != null) {
           await _incrementAccountBalance(transaction.toAccountId!, transaction.amount);
+          await _syncInvestmentFlowIntoSnapshot(
+            accountId: transaction.toAccountId!,
+            delta: transaction.amount,
+            transactionDate: transaction.transactionDate,
+          );
         }
         return;
     }
@@ -668,7 +704,7 @@ class AppDatabase extends _$AppDatabase {
         return;
       case model.TransactionType.adjustment:
         await _incrementAccountBalance(transaction.accountId, -transaction.amount);
-        await _syncAdjustmentIntoSnapshot(
+        await _syncInvestmentFlowIntoSnapshot(
           accountId: transaction.accountId,
           delta: -transaction.amount,
           transactionDate: transaction.transactionDate,
@@ -679,8 +715,18 @@ class AppDatabase extends _$AppDatabase {
         return;
       case model.TransactionType.transfer:
         await _incrementAccountBalance(transaction.accountId, transaction.amount);
+        await _syncInvestmentFlowIntoSnapshot(
+          accountId: transaction.accountId,
+          delta: transaction.amount,
+          transactionDate: transaction.transactionDate,
+        );
         if (transaction.toAccountId != null) {
           await _incrementAccountBalance(transaction.toAccountId!, -transaction.amount);
+          await _syncInvestmentFlowIntoSnapshot(
+            accountId: transaction.toAccountId!,
+            delta: -transaction.amount,
+            transactionDate: transaction.transactionDate,
+          );
         }
         return;
     }
@@ -695,11 +741,14 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  Future<void> _syncAdjustmentIntoSnapshot({
+  Future<void> _syncInvestmentFlowIntoSnapshot({
     required String accountId,
     required double delta,
     required DateTime transactionDate,
   }) async {
+    if (delta == 0) {
+      return;
+    }
     final account = await (select(accounts)..where((tbl) => tbl.id.equals(accountId))).getSingle();
     final reportGroup = enumByName(model.ReportGroup.values, account.reportGroup);
     if (reportGroup != model.ReportGroup.investment &&
@@ -712,34 +761,55 @@ class AppDatabase extends _$AppDatabase {
           ..orderBy([(tbl) => OrderingTerm.desc(tbl.snapshotDate)])
           ..limit(1))
         .getSingleOrNull();
+    final first = await (select(assetSnapshots)
+          ..where((tbl) => tbl.accountId.equals(accountId))
+          ..orderBy([(tbl) => OrderingTerm.asc(tbl.snapshotDate)])
+          ..limit(1))
+        .getSingleOrNull();
 
     if (latest == null) {
       final seededCost = delta.clamp(0, double.infinity).toDouble();
+      final seededMarketValue = account.currentBalance;
+      final seededCashBalance = account.currentBalance.clamp(0, double.infinity).toDouble();
       await into(assetSnapshots).insert(
         AssetSnapshotsCompanion.insert(
           id: 'snap_${DateTime.now().microsecondsSinceEpoch}',
           accountId: accountId,
           snapshotDate: transactionDate,
-          marketValue: account.currentBalance,
+          marketValue: seededMarketValue,
           costBasis: Value(seededCost),
-          cashBalance: Value(seededCost),
-          unrealizedPnl: Value(account.currentBalance - seededCost),
+          cashBalance: Value(seededCashBalance),
+          unrealizedPnl: Value(seededMarketValue - seededCost),
         ),
       );
       return;
     }
 
     final nextMarketValue = latest.marketValue + delta;
-    final nextCostBasis = (latest.costBasis + delta).clamp(0, double.infinity).toDouble();
     final nextCashBalance = (latest.cashBalance + delta).clamp(0, double.infinity).toDouble();
+    final shouldAdjustBaselineCost =
+        first != null && !transactionDate.isAfter(first.snapshotDate);
+    final nextLatestCostBasis = shouldAdjustBaselineCost && first.id == latest.id
+        ? (latest.costBasis + delta).clamp(0, double.infinity).toDouble()
+        : latest.costBasis;
     await (update(assetSnapshots)..where((tbl) => tbl.id.equals(latest.id))).write(
       AssetSnapshotsCompanion(
         marketValue: Value(nextMarketValue),
-        costBasis: Value(nextCostBasis),
+        costBasis: Value(nextLatestCostBasis),
         cashBalance: Value(nextCashBalance),
-        unrealizedPnl: Value(nextMarketValue - nextCostBasis),
+        unrealizedPnl: Value(nextMarketValue - nextLatestCostBasis),
       ),
     );
+
+    if (shouldAdjustBaselineCost && first.id != latest.id) {
+      final nextFirstCostBasis = (first.costBasis + delta).clamp(0, double.infinity).toDouble();
+      await (update(assetSnapshots)..where((tbl) => tbl.id.equals(first.id))).write(
+        AssetSnapshotsCompanion(
+          costBasis: Value(nextFirstCostBasis),
+          unrealizedPnl: Value(first.marketValue - nextFirstCostBasis),
+        ),
+      );
+    }
   }
 }
 

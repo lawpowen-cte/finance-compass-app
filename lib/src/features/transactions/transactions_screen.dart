@@ -16,6 +16,7 @@ class TransactionsScreen extends StatefulWidget {
     super.key,
     required this.repository,
     required this.onAddTransaction,
+    required this.onAddTransactions,
     required this.onEditTransaction,
     required this.onDeleteTransaction,
     required this.onAddCategory,
@@ -25,6 +26,7 @@ class TransactionsScreen extends StatefulWidget {
 
   final FinanceRepository repository;
   final Future<void> Function(FinanceTransaction transaction) onAddTransaction;
+  final Future<void> Function(List<FinanceTransaction> transactions) onAddTransactions;
   final Future<void> Function(FinanceTransaction transaction) onEditTransaction;
   final Future<void> Function(String transactionId) onDeleteTransaction;
   final Future<void> Function(Category category) onAddCategory;
@@ -37,7 +39,9 @@ class TransactionsScreen extends StatefulWidget {
 
 class _TransactionsScreenState extends State<TransactionsScreen> {
   String? selectedCategoryId;
-  String? selectedMonthKey;
+  String? selectedAccountId;
+  String? selectedMonthFrom = monthKeyFromDate(DateTime.now());
+  String? selectedMonthTo = monthKeyFromDate(DateTime.now());
   TransactionType? selectedTransactionType;
   bool showCategories = false;
 
@@ -50,20 +54,46 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     final effectiveCategoryId = visibleCategories.any((item) => item.id == selectedCategoryId)
         ? selectedCategoryId
         : null;
-    final monthKeys = repository.transactions
-        .map((item) => monthKeyFromDate(item.transactionDate))
-        .toSet()
-        .toList()
+    final accounts = [...repository.accounts]
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final effectiveAccountId =
+        accounts.any((item) => item.id == selectedAccountId) ? selectedAccountId : null;
+    final monthKeys = {
+      monthKeyFromDate(DateTime.now()),
+      ...repository.transactions.map((item) => monthKeyFromDate(item.transactionDate)),
+    }.toList()
       ..sort((a, b) => b.compareTo(a));
 
+    if (selectedMonthFrom != null && !monthKeys.contains(selectedMonthFrom)) {
+      selectedMonthFrom = monthKeyFromDate(DateTime.now());
+    }
+    if (selectedMonthTo != null && !monthKeys.contains(selectedMonthTo)) {
+      selectedMonthTo = monthKeyFromDate(DateTime.now());
+    }
+    if (selectedMonthFrom != null &&
+        selectedMonthTo != null &&
+        selectedMonthFrom!.compareTo(selectedMonthTo!) > 0) {
+      selectedMonthTo = selectedMonthFrom;
+    }
+
     final filteredTransactions = repository.transactions.where((transaction) {
+      final transactionMonthKey = monthKeyFromDate(transaction.transactionDate);
       final matchesCategory =
           effectiveCategoryId == null || transaction.categoryId == effectiveCategoryId;
-      final matchesMonth =
-          selectedMonthKey == null || monthKeyFromDate(transaction.transactionDate) == selectedMonthKey;
+      final matchesAccount = effectiveAccountId == null ||
+          transaction.accountId == effectiveAccountId ||
+          transaction.toAccountId == effectiveAccountId;
+      final matchesMonthFrom =
+          selectedMonthFrom == null || transactionMonthKey.compareTo(selectedMonthFrom!) >= 0;
+      final matchesMonthTo =
+          selectedMonthTo == null || transactionMonthKey.compareTo(selectedMonthTo!) <= 0;
       final matchesType =
           selectedTransactionType == null || transaction.type == selectedTransactionType;
-      return matchesCategory && matchesMonth && matchesType;
+      return matchesCategory &&
+          matchesAccount &&
+          matchesMonthFrom &&
+          matchesMonthTo &&
+          matchesType;
     }).toList()
       ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
 
@@ -102,9 +132,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<String?>(
-                      initialValue: selectedMonthKey,
+                      initialValue: selectedMonthFrom,
                       decoration: const InputDecoration(
-                        labelText: '月份',
+                        labelText: '起始月份',
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -120,7 +150,73 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                           ),
                         ),
                       ],
-                      onChanged: (value) => setState(() => selectedMonthKey = value),
+                      onChanged: (value) => setState(() {
+                        selectedMonthFrom = value;
+                        if (selectedMonthFrom != null &&
+                            selectedMonthTo != null &&
+                            selectedMonthFrom!.compareTo(selectedMonthTo!) > 0) {
+                          selectedMonthTo = selectedMonthFrom;
+                        }
+                      }),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButtonFormField<String?>(
+                      initialValue: selectedMonthTo,
+                      decoration: const InputDecoration(
+                        labelText: '结束月份',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text('全部'),
+                        ),
+                        ...monthKeys.map(
+                          (monthKey) => DropdownMenuItem<String?>(
+                            value: monthKey,
+                            child: Text(monthLabel(monthKey)),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) => setState(() {
+                        selectedMonthTo = value;
+                        if (selectedMonthFrom != null &&
+                            selectedMonthTo != null &&
+                            selectedMonthFrom!.compareTo(selectedMonthTo!) > 0) {
+                          selectedMonthFrom = selectedMonthTo;
+                        }
+                      }),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String?>(
+                      initialValue: effectiveAccountId,
+                      decoration: const InputDecoration(
+                        labelText: '账户',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text('全部'),
+                        ),
+                        ...accounts.map(
+                          (account) => DropdownMenuItem<String?>(
+                            value: account.id,
+                            child: Text(account.name),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) => setState(() => selectedAccountId = value),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -154,29 +250,31 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       }),
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String?>(
-                initialValue: effectiveCategoryId,
-                decoration: const InputDecoration(
-                  labelText: '类别',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text('全部'),
-                  ),
-                  ...visibleCategories.map(
-                    (category) => DropdownMenuItem<String?>(
-                      value: category.id,
-                      child: Text('${category.name} · ${_categoryTypeLabel(category.type)}'),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButtonFormField<String?>(
+                      initialValue: effectiveCategoryId,
+                      decoration: const InputDecoration(
+                        labelText: '类别',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text('全部'),
+                        ),
+                        ...visibleCategories.map(
+                          (category) => DropdownMenuItem<String?>(
+                            value: category.id,
+                            child: Text('${category.name} · ${_categoryTypeLabel(category.type)}'),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) => setState(() => selectedCategoryId = value),
                     ),
                   ),
                 ],
-                onChanged: (value) => setState(() => selectedCategoryId = value),
               ),
             ],
           ),
@@ -384,7 +482,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   }
 
   String _transactionMeta(FinanceRepository repository, FinanceTransaction transaction) {
-    final categoryName = transaction.categoryId == null ? null : repository.categoryName(transaction.categoryId!);
+    final categoryName =
+        transaction.categoryId == null ? null : repository.categoryName(transaction.categoryId!);
     final dateLabel =
         '${transaction.transactionDate.year}-${transaction.transactionDate.month.toString().padLeft(2, '0')}-${transaction.transactionDate.day.toString().padLeft(2, '0')}';
     return [
@@ -435,17 +534,21 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   }
 
   Future<void> _showAddTransaction(BuildContext context) async {
-    final result = await showDialog<FinanceTransaction>(
+    final result = await showDialog<TransactionFormResult>(
       context: context,
       builder: (_) => TransactionFormDialog(repository: widget.repository),
     );
     if (result != null) {
-      await widget.onAddTransaction(result);
+      if (result.transactions.length == 1) {
+        await widget.onAddTransaction(result.transactions.first);
+      } else {
+        await widget.onAddTransactions(result.transactions);
+      }
     }
   }
 
   Future<void> _showEditTransaction(BuildContext context, FinanceTransaction transaction) async {
-    final result = await showDialog<FinanceTransaction>(
+    final result = await showDialog<TransactionFormResult>(
       context: context,
       builder: (_) => TransactionFormDialog(
         repository: widget.repository,
@@ -453,7 +556,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       ),
     );
     if (result != null) {
-      await widget.onEditTransaction(result);
+      await widget.onEditTransaction(result.transactions.first);
     }
   }
 

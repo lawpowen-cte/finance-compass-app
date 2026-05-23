@@ -7,7 +7,7 @@ import '../../core/utils/month_key.dart';
 import '../shared/screen_header.dart';
 import 'budget_form_dialog.dart';
 
-class BudgetsScreen extends StatelessWidget {
+class BudgetsScreen extends StatefulWidget {
   const BudgetsScreen({
     super.key,
     required this.repository,
@@ -20,11 +20,30 @@ class BudgetsScreen extends StatelessWidget {
   final Future<void> Function(String budgetId) onDeleteBudget;
 
   @override
+  State<BudgetsScreen> createState() => _BudgetsScreenState();
+}
+
+class _BudgetsScreenState extends State<BudgetsScreen> {
+  late String _selectedMonth;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedMonth = monthKeyFromDate(DateTime.now());
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final repository = widget.repository;
     final budgets = repository.reusableBudgets();
-    final currentMonth = monthKeyFromDate(DateTime.now());
-    final totalBudget = repository.totalEffectiveBudgetForMonth(currentMonth);
-    final totalSpent = repository.totalBudgetExpenseForMonth(currentMonth);
+    final monthOptions = _buildMonthOptions();
+    if (!monthOptions.contains(_selectedMonth)) {
+      _selectedMonth = monthOptions.first;
+    }
+
+    final totalBudget = repository.totalEffectiveBudgetForMonth(_selectedMonth);
+    final totalSpent = repository.totalBudgetExpenseForMonth(_selectedMonth);
+    final totalBalance = totalBudget - totalSpent;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -44,20 +63,54 @@ class BudgetsScreen extends StatelessWidget {
           margin: const EdgeInsets.only(bottom: 14),
           child: Padding(
             padding: const EdgeInsets.all(18),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: _SummaryMetric(
-                    label: '本月总预算',
-                    value: formatMoney(totalBudget),
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedMonth,
+                  decoration: const InputDecoration(
+                    labelText: '月份',
+                    border: OutlineInputBorder(),
                   ),
+                  items: monthOptions
+                      .map(
+                        (monthKey) => DropdownMenuItem(
+                          value: monthKey,
+                          child: Text(_monthLabel(monthKey)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    setState(() => _selectedMonth = value);
+                  },
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _SummaryMetric(
-                    label: '本月已使用',
-                    value: formatMoney(totalSpent),
-                  ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _SummaryMetric(
+                        label: '总预算',
+                        value: formatMoney(totalBudget),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _SummaryMetric(
+                        label: '已使用',
+                        value: formatMoney(totalSpent),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _SummaryMetric(
+                        label: '余额',
+                        value: formatMoney(totalBalance),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -74,22 +127,40 @@ class BudgetsScreen extends StatelessWidget {
           (budget) => _BudgetTile(
             budget: budget,
             repository: repository,
-            currentMonth: currentMonth,
+            selectedMonth: _selectedMonth,
             onEdit: () => _showEditBudget(context, budget),
-            onDelete: () => onDeleteBudget(budget.id),
+            onDelete: () => widget.onDeleteBudget(budget.id),
           ),
         ),
       ],
     );
   }
 
+  List<String> _buildMonthOptions() {
+    final now = DateTime.now();
+    return List.generate(
+      7,
+      (index) => monthKeyFromDate(DateTime(now.year, now.month + index)),
+    );
+  }
+
+  String _monthLabel(String monthKey) {
+    final parts = monthKey.split('-');
+    if (parts.length != 2) {
+      return monthKey;
+    }
+    final year = int.tryParse(parts[0]) ?? 0;
+    final month = int.tryParse(parts[1]) ?? 1;
+    return '$year-${month.toString().padLeft(2, '0')}';
+  }
+
   Future<void> _showAddBudget(BuildContext context) async {
     final result = await showDialog<Budget>(
       context: context,
-      builder: (_) => BudgetFormDialog(repository: repository),
+      builder: (_) => BudgetFormDialog(repository: widget.repository),
     );
     if (result != null) {
-      await onAddBudget(result);
+      await widget.onAddBudget(result);
     }
   }
 
@@ -97,12 +168,12 @@ class BudgetsScreen extends StatelessWidget {
     final result = await showDialog<Budget>(
       context: context,
       builder: (_) => BudgetFormDialog(
-        repository: repository,
+        repository: widget.repository,
         initialBudget: budget,
       ),
     );
     if (result != null) {
-      await onAddBudget(result);
+      await widget.onAddBudget(result);
     }
   }
 }
@@ -111,22 +182,22 @@ class _BudgetTile extends StatelessWidget {
   const _BudgetTile({
     required this.budget,
     required this.repository,
-    required this.currentMonth,
+    required this.selectedMonth,
     required this.onEdit,
     required this.onDelete,
   });
 
   final Budget budget;
   final FinanceRepository repository;
-  final String currentMonth;
+  final String selectedMonth;
   final Future<void> Function() onEdit;
   final Future<void> Function() onDelete;
 
   @override
   Widget build(BuildContext context) {
     final monthlyBudget = budget.amount;
-    final effectiveBudget = repository.effectiveBudgetForMonth(budget, currentMonth);
-    final spent = repository.expenseTotalForCategory(budget.categoryId, currentMonth);
+    final effectiveBudget = repository.effectiveBudgetForMonth(budget, selectedMonth);
+    final spent = repository.expenseTotalForCategory(budget.categoryId, selectedMonth);
     final monthlyBalance = effectiveBudget - spent;
     final usage = effectiveBudget <= 0 ? 0.0 : (spent / effectiveBudget).clamp(0.0, 1.0);
     final percent = (usage * 100).round();
@@ -188,7 +259,7 @@ class _BudgetTile extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: _SummaryMetric(
-                    label: '本月余额',
+                    label: '余额',
                     value: formatMoney(monthlyBalance),
                   ),
                 ),
