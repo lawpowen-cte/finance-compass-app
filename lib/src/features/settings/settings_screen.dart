@@ -4,48 +4,32 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:open_filex/open_filex.dart';
-
 import '../../core/data/finance_repository.dart';
+import '../../core/providers/mutations/account_mutations.dart';
+import '../../core/providers/mutations/export_mutations.dart';
+
 import '../../core/settings/app_settings_controller.dart';
 import '../../core/settings/app_theme_style.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/currency_formatter.dart';
+import '../../core/utils/month_key.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({
     super.key,
     required this.repository,
     required this.settingsController,
-    required this.onLoadExampleData,
-    required this.onUpdateExchangeRates,
-    required this.onExportJsonBytes,
-    required this.onExportAiSummaryBytes,
-    required this.onExportFuturePlanningBytes,
-    required this.onImportJson,
-    required this.onPreviewImportJson,
   });
-
   final FinanceRepository repository;
   final AppSettingsController settingsController;
-  final Future<void> Function() onLoadExampleData;
-  final Future<void> Function(
-    Map<String, double> ratesToBase,
-    List<String> currencyPriority,
-  ) onUpdateExchangeRates;
-  final Future<Uint8List> Function() onExportJsonBytes;
-  final Future<Uint8List> Function() onExportAiSummaryBytes;
-  final Future<Uint8List> Function() onExportFuturePlanningBytes;
-  final Future<void> Function(String path) onImportJson;
-  final Future<ImportPreview> Function(String path) onPreviewImportJson;
-
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
-
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isBusy = false;
   final _rateControllers = <String, TextEditingController>{};
   var _currencyOrder = <String>[];
@@ -117,7 +101,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       nextRates[currency] = rate;
     }
     await _runBusyTask(() async {
-      await widget.onUpdateExchangeRates(nextRates, _currencyOrder);
+      await ref.read(accountMutationsProvider.notifier).updateExchangeRates(nextRates, _currencyOrder);
       if (!mounted) {
         return;
       }
@@ -267,7 +251,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
 
-      final preview = await widget.onPreviewImportJson(path);
+      final preview = await ref.read(exportMutationsProvider.notifier).previewImport(path);
       if (!mounted) {
         return;
       }
@@ -318,7 +302,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
 
-      await widget.onImportJson(path);
+      await ref.read(exportMutationsProvider.notifier).importJson(path);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('导入完成')),
@@ -350,7 +334,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
     await _runBusyTask(() async {
-      await widget.onLoadExampleData();
+      await ref.read(exportMutationsProvider.notifier).loadExampleData();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('示例资料已写入。')),
@@ -493,7 +477,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ? null
                             : () => _exportJson(
                                   fileName: 'finance_compass_export',
-                                  bytesBuilder: widget.onExportJsonBytes,
+                                  bytesBuilder: () => ref.read(exportMutationsProvider.notifier).exportJsonBytes(),
                                   successLabel: 'JSON 已保存到',
                                   validateBytes: _validateFullJsonExport,
                                 ),
@@ -505,7 +489,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ? null
                             : () => _exportJson(
                                   fileName: 'finance_compass_ai_summary',
-                                  bytesBuilder: widget.onExportAiSummaryBytes,
+                                  bytesBuilder: () => ref.read(exportMutationsProvider.notifier).exportAiSummaryBytes(monthKeys: [monthKeyFromDate(DateTime.now())]),
                                   successLabel: 'AI 摘要已保存到',
                                   openAfterSave: true,
                                 ),
@@ -518,7 +502,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             : () => _exportCsv(
                                   fileName: 'finance_compass_future_planning',
                                   bytesBuilder:
-                                      widget.onExportFuturePlanningBytes,
+                                      () => ref.read(exportMutationsProvider.notifier).exportFuturePlanningCsvBytes(),
                                   successLabel: '未来规划表已保存到',
                                 ),
                         icon: const Icon(Icons.table_chart_outlined),

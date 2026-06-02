@@ -67,7 +67,7 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<CategoryType>(
-                initialValue: categoryType,
+                value: categoryType,
                 decoration: const InputDecoration(
                   labelText: '类别类型',
                   border: OutlineInputBorder(),

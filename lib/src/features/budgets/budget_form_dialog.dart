@@ -74,7 +74,7 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<String>(
-                  initialValue: categoryId,
+                  value: categoryId,
                   decoration: const InputDecoration(
                     labelText: '支出类别',
                     border: OutlineInputBorder(),
@@ -108,7 +108,7 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
-                  initialValue: currency,
+                  value: currency,
                   decoration: const InputDecoration(
                     labelText: '预算币种',
                     border: OutlineInputBorder(),

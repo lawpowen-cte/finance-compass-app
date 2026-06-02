@@ -1,13 +1,8 @@
 import 'package:flutter/material.dart';
-import 'dart:typed_data';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/data/finance_repository.dart';
-import '../../core/database/database_provider.dart';
-import '../../core/models/account.dart';
-import '../../core/models/asset_snapshot.dart';
-import '../../core/models/budget.dart';
-import '../../core/models/category.dart';
-import '../../core/models/transaction.dart';
+
+import '../../core/providers/repository_provider.dart';
 import '../../core/settings/app_settings_controller.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/currency_formatter.dart';
@@ -18,375 +13,55 @@ import '../reports/reports_screen.dart';
 import '../settings/settings_screen.dart';
 import '../transactions/transactions_screen.dart';
 
-class HomeScreen extends StatefulWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({
     super.key,
-    this.repositoryFuture,
     required this.settingsController,
   });
 
-  final Future<FinanceRepository>? repositoryFuture;
   final AppSettingsController settingsController;
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
-  FinanceRepository? repository;
-  Object? loadError;
-  bool isBusy = true;
+class _HomeScreenState extends ConsumerState<HomeScreen> {
   int selectedIndex = 0;
 
   @override
-  void initState() {
-    super.initState();
-    _loadRepository();
-  }
-
-  Future<void> _loadRepository() async {
-    setState(() {
-      isBusy = true;
-      loadError = null;
-    });
-
-    try {
-      final loadedRepository = await (widget.repositoryFuture ??
-          FinanceRepository.load(DatabaseProvider.instance));
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        repository = loadedRepository;
-        isBusy = false;
-      });
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        loadError = error;
-        isBusy = false;
-      });
-    }
-  }
-
-  Future<void> _replaceRepository(Future<FinanceRepository> future) async {
-    setState(() => isBusy = true);
-    try {
-      final nextRepository = await future;
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        repository = nextRepository;
-        isBusy = false;
-      });
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        loadError = error;
-        isBusy = false;
-      });
-    }
-  }
-
-  Future<FinanceRepository> _replaceRepositoryAndReturn(
-      Future<FinanceRepository> future) async {
-    setState(() => isBusy = true);
-    try {
-      final nextRepository = await future;
-      if (!mounted) {
-        return nextRepository;
-      }
-      setState(() {
-        repository = nextRepository;
-        isBusy = false;
-      });
-      return nextRepository;
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          loadError = error;
-          isBusy = false;
-        });
-      }
-      rethrow;
-    }
-  }
-
-  Future<void> _handleAddAccount(Account account) {
-    return _replaceRepository(repository!.addAccount(account));
-  }
-
-  Future<void> _handleUpdateAccount(Account account) {
-    return _replaceRepository(repository!.updateExistingAccount(account));
-  }
-
-  Future<void> _handleAddBudget(Budget budget) {
-    return _replaceRepository(repository!.addBudget(budget));
-  }
-
-  Future<void> _handleDeleteBudget(String budgetId) {
-    return _replaceRepository(repository!.deleteExistingBudget(budgetId));
-  }
-
-  Future<void> _handleAddCategory(Category category) {
-    return _replaceRepository(repository!.addCategory(category));
-  }
-
-  Future<void> _handleUpdateCategory(Category category) {
-    return _replaceRepository(repository!.updateExistingCategory(category));
-  }
-
-  Future<ImportPreview> _handlePreviewImportJson(String path) {
-    return repository!.previewImportJson(path);
-  }
-
-  Future<void> _handleAddTransaction(FinanceTransaction transaction) {
-    return _replaceRepository(repository!.addTransaction(transaction));
-  }
-
-  Future<void> _handleAddTransactions(List<FinanceTransaction> transactions) {
-    return _replaceRepository(repository!.addTransactions(transactions));
-  }
-
-  Future<void> _handleUpdateTransaction(FinanceTransaction transaction) {
-    return _replaceRepository(
-        repository!.updateExistingTransaction(transaction));
-  }
-
-  Future<void> _handleDeleteTransaction(String transactionId) {
-    return _replaceRepository(
-        repository!.deleteExistingTransaction(transactionId));
-  }
-
-  Future<void> _handleAddTransactionTemplate(
-    String name,
-    FinanceTransaction transaction,
-  ) {
-    return _replaceRepository(
-      repository!.addTransactionTemplate(
-        name: name,
-        transaction: transaction,
-      ),
-    );
-  }
-
-  Future<void> _handleDeleteTransactionTemplate(String templateId) {
-    return _replaceRepository(
-        repository!.deleteTransactionTemplate(templateId));
-  }
-
-  Future<void> _handleAddRecurringTransactionRule(
-    String name,
-    FinanceTransaction transaction,
-    int intervalMonths,
-  ) {
-    return _replaceRepository(
-      repository!.addRecurringTransactionRule(
-        name: name,
-        transaction: transaction,
-        intervalMonths: intervalMonths,
-      ),
-    );
-  }
-
-  Future<void> _handleDeleteRecurringTransactionRule(String ruleId) {
-    return _replaceRepository(
-        repository!.deleteRecurringTransactionRule(ruleId));
-  }
-
-  Future<void> _handleGenerateRecurringTransactions(
-    String ruleId,
-    int monthsAhead,
-  ) {
-    return _replaceRepository(
-      repository!
-          .generateRecurringTransactions(ruleId, monthsAhead: monthsAhead),
-    );
-  }
-
-  Future<void> _handleAddSnapshot(AssetSnapshot snapshot) {
-    return _replaceRepository(repository!.addAssetSnapshot(snapshot));
-  }
-
-  Future<FinanceRepository> _handleUpdateSnapshot(AssetSnapshot snapshot) {
-    return _replaceRepositoryAndReturn(
-        repository!.updateExistingAssetSnapshot(snapshot));
-  }
-
-  Future<FinanceRepository> _handleDeleteSnapshot(String snapshotId) {
-    return _replaceRepositoryAndReturn(
-        repository!.deleteExistingAssetSnapshot(snapshotId));
-  }
-
-  Future<void> _handleLoadExampleData() {
-    return _replaceRepository(repository!.loadExampleData());
-  }
-
-  Future<void> _handleAddAssetGoal(String name, double amount) {
-    return _replaceRepository(
-      repository!.addAssetGoal(name: name, amount: amount),
-    );
-  }
-
-  Future<void> _handleUpdateAssetGoal(AssetGoal goal) {
-    return _replaceRepository(repository!.updateAssetGoal(goal));
-  }
-
-  Future<void> _handleDeleteAssetGoal(String goalId) {
-    return _replaceRepository(repository!.deleteAssetGoal(goalId));
-  }
-
-  Future<void> _handleSetAccountReconciledMonth(
-    String accountId,
-    String monthKey,
-  ) {
-    return _replaceRepository(
-      repository!.setAccountReconciledMonth(accountId, monthKey),
-    );
-  }
-
-  Future<void> _handleUpdateExchangeRates(
-    Map<String, double> ratesToBase,
-    List<String> currencyPriority,
-  ) {
-    return _replaceRepository(
-      repository!.updateExchangeRates(ratesToBase, currencyPriority),
-    );
-  }
-
-  Future<Uint8List> _handleExportJsonBytes() {
-    return repository!.exportJsonSnapshotBytes();
-  }
-
-  Future<Uint8List> _handleExportAiSummaryBytes() async {
-    final monthKeys = repository!.transactions
-        .map((item) => item.transactionDate)
-        .map((date) => '${date.year}-${date.month.toString().padLeft(2, '0')}')
-        .toSet()
-        .toList()
-      ..sort();
-    return repository!.exportAiSummaryBytes(
-      monthKeys: monthKeys,
-    );
-  }
-
-  Future<Uint8List> _handleExportFuturePlanningBytes() async {
-    return repository!.exportFuturePlanningCsvBytes();
-  }
-
-  Future<void> _handleImportJson(String path) {
-    return _replaceRepository(repository!.importJsonSnapshot(path));
-  }
-
-  Future<bool> _handleDeleteAccount(String accountId) async {
-    final nextRepository = await repository!.deleteAccountIfSafe(accountId);
-    if (nextRepository == null) {
-      return false;
-    }
-    if (!mounted) {
-      return false;
-    }
-    setState(() {
-      repository = nextRepository;
-    });
-    return true;
-  }
-
-  Future<bool> _handleDeleteCategory(String categoryId) async {
-    final nextRepository = await repository!.deleteCategoryIfSafe(categoryId);
-    if (nextRepository == null) {
-      return false;
-    }
-    if (!mounted) {
-      return false;
-    }
-    setState(() {
-      repository = nextRepository;
-    });
-    return true;
-  }
-
-  @override
   Widget build(BuildContext context) {
-    if (isBusy && repository == null) {
-      return const Scaffold(
-        body: SafeArea(child: Center(child: CircularProgressIndicator())),
-      );
-    }
+    final repositoryAsync = ref.watch(financeRepositoryProvider);
 
-    if (loadError != null && repository == null) {
-      return Scaffold(
+    return repositoryAsync.when(
+      loading: () => const Scaffold(
+        body: SafeArea(child: Center(child: CircularProgressIndicator())),
+      ),
+      error: (error, _) => Scaffold(
         body: SafeArea(
           child: Center(
             child: Padding(
               padding: const EdgeInsets.all(24),
-              child: Text('Failed to open finance database: $loadError'),
+              child: Text('Failed to open finance database: $error'),
             ),
           ),
         ),
-      );
-    }
+      ),
+      data: (repository) {
+        setActiveBaseCurrency(repository.baseCurrency);
+        final palette = paletteForStyle(widget.settingsController.themeStyle);
+        final screens = [
+          DashboardScreen(repository: repository),
+          AccountsScreen(repository: repository),
+          TransactionsScreen(repository: repository),
+          BudgetsScreen(repository: repository),
+          ReportsScreen(repository: repository),
+          SettingsScreen(
+            repository: repository,
+            settingsController: widget.settingsController,
+          ),
+        ];
 
-    final currentRepository = repository!;
-    setActiveBaseCurrency(currentRepository.baseCurrency);
-    final palette = paletteForStyle(widget.settingsController.themeStyle);
-    final screens = [
-      DashboardScreen(repository: currentRepository),
-      AccountsScreen(
-        repository: currentRepository,
-        onAddAccount: _handleAddAccount,
-        onEditAccount: _handleUpdateAccount,
-        onDeleteAccount: _handleDeleteAccount,
-        onAddSnapshot: _handleAddSnapshot,
-        onEditSnapshot: _handleUpdateSnapshot,
-        onDeleteSnapshot: _handleDeleteSnapshot,
-        onAddAssetGoal: _handleAddAssetGoal,
-        onUpdateAssetGoal: _handleUpdateAssetGoal,
-        onDeleteAssetGoal: _handleDeleteAssetGoal,
-        onSetAccountReconciledMonth: _handleSetAccountReconciledMonth,
-      ),
-      TransactionsScreen(
-        repository: currentRepository,
-        onAddTransaction: _handleAddTransaction,
-        onAddTransactions: _handleAddTransactions,
-        onEditTransaction: _handleUpdateTransaction,
-        onDeleteTransaction: _handleDeleteTransaction,
-        onAddTransactionTemplate: _handleAddTransactionTemplate,
-        onDeleteTransactionTemplate: _handleDeleteTransactionTemplate,
-        onAddRecurringTransactionRule: _handleAddRecurringTransactionRule,
-        onDeleteRecurringTransactionRule: _handleDeleteRecurringTransactionRule,
-        onGenerateRecurringTransactions: _handleGenerateRecurringTransactions,
-        onAddCategory: _handleAddCategory,
-        onUpdateCategory: _handleUpdateCategory,
-        onDeleteCategory: _handleDeleteCategory,
-      ),
-      BudgetsScreen(
-        repository: currentRepository,
-        onAddBudget: _handleAddBudget,
-        onDeleteBudget: _handleDeleteBudget,
-      ),
-      ReportsScreen(repository: currentRepository),
-      SettingsScreen(
-        repository: currentRepository,
-        settingsController: widget.settingsController,
-        onLoadExampleData: _handleLoadExampleData,
-        onUpdateExchangeRates: _handleUpdateExchangeRates,
-        onExportJsonBytes: _handleExportJsonBytes,
-        onExportAiSummaryBytes: _handleExportAiSummaryBytes,
-        onExportFuturePlanningBytes: _handleExportFuturePlanningBytes,
-        onImportJson: _handleImportJson,
-        onPreviewImportJson: _handlePreviewImportJson,
-      ),
-    ];
-
-    return Stack(
-      children: [
-        Container(
+        return Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
@@ -427,15 +102,8 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           ),
-        ),
-        if (isBusy)
-          IgnorePointer(
-            child: Container(
-              color: Colors.black12,
-              child: const Center(child: CircularProgressIndicator()),
-            ),
-          ),
-      ],
+        );
+      },
     );
   }
 }

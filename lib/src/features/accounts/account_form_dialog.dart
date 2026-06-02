@@ -80,7 +80,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<AccountType>(
-                  initialValue: accountType,
+                  value: accountType,
                   decoration: const InputDecoration(
                     labelText: '账户类型',
                     border: OutlineInputBorder(),
@@ -96,7 +96,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<ReportGroup>(
-                  initialValue: reportGroup,
+                  value: reportGroup,
                   decoration: const InputDecoration(
                     labelText: '报表分组',
                     border: OutlineInputBorder(),
@@ -109,7 +109,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
-                  initialValue: currency,
+                  value: currency,
                   decoration: const InputDecoration(
                     labelText: '货币',
                     border: OutlineInputBorder(),

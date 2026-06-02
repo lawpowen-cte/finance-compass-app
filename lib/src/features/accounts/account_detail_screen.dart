@@ -1,72 +1,73 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/asset_snapshot.dart';
+import '../../core/providers/mutations/asset_mutations.dart';
+import '../../core/providers/repository_provider.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 import '../shared/simple_charts.dart';
 import 'asset_snapshot_form_dialog.dart';
 
-class AccountDetailScreen extends StatefulWidget {
+class AccountDetailScreen extends ConsumerStatefulWidget {
   const AccountDetailScreen({
     super.key,
     required this.account,
     required this.repository,
-    required this.onEditSnapshot,
-    required this.onDeleteSnapshot,
   });
 
   final Account account;
   final FinanceRepository repository;
-  final Future<FinanceRepository> Function(AssetSnapshot snapshot) onEditSnapshot;
-  final Future<FinanceRepository> Function(String snapshotId) onDeleteSnapshot;
 
   @override
-  State<AccountDetailScreen> createState() => _AccountDetailScreenState();
+  ConsumerState<AccountDetailScreen> createState() =>
+      _AccountDetailScreenState();
 }
 
-class _AccountDetailScreenState extends State<AccountDetailScreen> {
-  late FinanceRepository _repository;
+class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
   bool _isSaving = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _repository = widget.repository;
+  FinanceRepository get _repository {
+    final async = ref.watch(financeRepositoryProvider);
+    return async.valueOrNull ?? widget.repository;
   }
 
   @override
   Widget build(BuildContext context) {
-    final cutoffDate = _repository.currentMonthCutoffDate();
-    final snapshots = _repository.snapshotsForAccount(widget.account.id);
-    final visibleSnapshots = _repository.snapshotsForAccountUpTo(widget.account.id, cutoffDate);
-    final latestSnapshot = visibleSnapshots.isEmpty ? null : visibleSnapshots.last;
+    final repository = _repository;
+    final cutoffDate = repository.currentMonthCutoffDate();
+    final snapshots = repository.snapshotsForAccount(widget.account.id);
+    final visibleSnapshots =
+        repository.snapshotsForAccountUpTo(widget.account.id, cutoffDate);
+    final latestSnapshot =
+        visibleSnapshots.isEmpty ? null : visibleSnapshots.last;
     final displayedMarketValue = latestSnapshot == null
         ? 0.0
-        : _repository.accountBalanceAt(widget.account.id, cutoffDate);
+        : repository.accountBalanceAt(widget.account.id, cutoffDate);
     final displayedCostBasis = latestSnapshot == null
         ? 0.0
-        : _repository.costBasisForAccount(
+        : repository.costBasisForAccount(
             widget.account.id,
             upToDate: cutoffDate,
           );
     final displayedCashBalance = latestSnapshot == null
         ? 0.0
-        : _repository.cashBalanceForAccount(
+        : repository.cashBalanceForAccount(
             widget.account.id,
             upToDate: cutoffDate,
           );
     final displayedRemainingCostBasis = latestSnapshot == null
         ? 0.0
-        : _repository.remainingCostBasisForAccount(
+        : repository.remainingCostBasisForAccount(
             widget.account.id,
             upToDate: cutoffDate,
           );
     final latestFlow = latestSnapshot == null
         ? const InvestmentFlowSummary(contribution: 0, withdrawal: 0)
-        : _repository.investmentFlowSummaryForAccount(
+        : repository.investmentFlowSummaryForAccount(
             widget.account.id,
             upToDate: cutoffDate,
           );
@@ -80,7 +81,8 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
             children: [
               ScreenHeader(
                 title: widget.account.name,
-                subtitle: '${_groupLabel(widget.account.reportGroup)} · ${widget.account.currency}',
+                subtitle:
+                    '${_groupLabel(widget.account.reportGroup)} · ${widget.account.currency}',
               ),
               const SizedBox(height: 16),
               SectionCard(
@@ -131,18 +133,23 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
                               ),
                               _MetricPill(
                                 label: '未实现盈亏',
-                                value: '${formatMoney(displayedMarketValue - displayedRemainingCostBasis, currency: widget.account.currency)} '
+                                value:
+                                    '${formatMoney(displayedMarketValue - displayedRemainingCostBasis, currency: widget.account.currency)} '
                                     '(${(displayedRemainingCostBasis == 0 ? 0.0 : ((displayedMarketValue - displayedRemainingCostBasis) / displayedRemainingCostBasis) * 100).toStringAsFixed(1)}%)',
-                                accent: displayedMarketValue - displayedRemainingCostBasis >= 0
-                                    ? const Color(0xFF15803D)
-                                    : const Color(0xFFB91C1C),
+                                accent:
+                                    displayedMarketValue -
+                                                displayedRemainingCostBasis >=
+                                            0
+                                        ? const Color(0xFF15803D)
+                                        : const Color(0xFFB91C1C),
                               ),
                             ],
                           ),
                           if (visibleSnapshots.length > 1) ...[
                             const SizedBox(height: 16),
                             MultiLineChart(
-                              series: _buildFlowSeries(visibleSnapshots),
+                              series: _buildFlowSeries(
+                                  visibleSnapshots, repository),
                               amountBuilder: (value) => formatMoney(
                                 value,
                                 currency: widget.account.currency,
@@ -162,7 +169,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
                         children: snapshots.reversed
                             .map((snapshot) => _SnapshotRow(
                                   snapshot: snapshot,
-                                  repository: _repository,
+                                  repository: repository,
                                   currency: widget.account.currency,
                                   onEdit: () => _editSnapshot(snapshot),
                                   onDelete: () => _deleteSnapshot(snapshot),
@@ -198,13 +205,10 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
 
     setState(() => _isSaving = true);
     try {
-      final nextRepository = await widget.onEditSnapshot(result);
+      await ref.read(assetMutationsProvider.notifier).updateSnapshot(result);
       if (!mounted) {
         return;
       }
-      setState(() {
-        _repository = nextRepository;
-      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('资产快照已保存')),
       );
@@ -247,13 +251,10 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
 
     setState(() => _isSaving = true);
     try {
-      final nextRepository = await widget.onDeleteSnapshot(snapshot.id);
+      await ref.read(assetMutationsProvider.notifier).deleteSnapshot(snapshot.id);
       if (!mounted) {
         return;
       }
-      setState(() {
-        _repository = nextRepository;
-      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('资产快照已删除')),
       );
@@ -271,17 +272,19 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
     }
   }
 
-  List<ChartSeries> _buildFlowSeries(List<AssetSnapshot> snapshots) {
+  List<ChartSeries> _buildFlowSeries(
+      List<AssetSnapshot> snapshots, FinanceRepository repository) {
     final contributionPoints = <ChartPoint>[];
     final withdrawalPoints = <ChartPoint>[];
     final marketValuePoints = <ChartPoint>[];
 
     for (final snapshot in snapshots) {
-      final summary = _repository.investmentFlowSummaryForAccount(
+      final summary = repository.investmentFlowSummaryForAccount(
         snapshot.accountId,
         upToDate: snapshot.snapshotDate,
       );
-      final label = '${snapshot.snapshotDate.month}/${snapshot.snapshotDate.day}';
+      final label =
+          '${snapshot.snapshotDate.month}/${snapshot.snapshotDate.day}';
       contributionPoints.add(
         ChartPoint(label: label, value: summary.contribution),
       );
@@ -291,7 +294,8 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
       marketValuePoints.add(
         ChartPoint(
           label: label,
-          value: _repository.accountBalanceAt(snapshot.accountId, snapshot.snapshotDate),
+          value: repository.accountBalanceAt(
+              snapshot.accountId, snapshot.snapshotDate),
         ),
       );
     }
@@ -365,7 +369,8 @@ class _SnapshotRow extends StatelessWidget {
       snapshot.accountId,
       snapshot.snapshotDate,
     );
-    final pnl = displayedMarketValue - repository.snapshotRemainingCostBasis(snapshot);
+    final pnl =
+        displayedMarketValue - repository.snapshotRemainingCostBasis(snapshot);
     final ratio = repository.snapshotPnlRatio(snapshot);
 
     return Container(
@@ -403,15 +408,22 @@ class _SnapshotRow extends StatelessWidget {
             spacing: 12,
             runSpacing: 8,
             children: [
-              Text('总市值 ${formatMoney(displayedMarketValue, currency: currency)}'),
-              Text('累计投入 ${formatMoney(flow.contribution, currency: currency)}'),
-              Text('累计取出 ${formatMoney(flow.withdrawal, currency: currency)}'),
-              Text('累计成本 ${formatMoney(repository.snapshotCostBasis(snapshot), currency: currency)}'),
-              Text('现金余额 ${formatMoney(snapshot.cashBalance, currency: currency)}'),
+              Text(
+                  '总市值 ${formatMoney(displayedMarketValue, currency: currency)}'),
+              Text(
+                  '累计投入 ${formatMoney(flow.contribution, currency: currency)}'),
+              Text(
+                  '累计取出 ${formatMoney(flow.withdrawal, currency: currency)}'),
+              Text(
+                  '累计成本 ${formatMoney(repository.snapshotCostBasis(snapshot), currency: currency)}'),
+              Text(
+                  '现金余额 ${formatMoney(snapshot.cashBalance, currency: currency)}'),
               Text(
                 '未实现盈亏 ${formatMoney(pnl, currency: currency)} (${(ratio * 100).toStringAsFixed(1)}%)',
                 style: TextStyle(
-                  color: pnl >= 0 ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
+                  color: pnl >= 0
+                      ? const Color(0xFF15803D)
+                      : const Color(0xFFB91C1C),
                   fontWeight: FontWeight.w700,
                 ),
               ),

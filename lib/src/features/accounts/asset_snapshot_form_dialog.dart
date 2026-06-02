@@ -129,7 +129,7 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<String>(
-                  initialValue: accountId,
+                  value: accountId,
                   decoration: const InputDecoration(
                     labelText: '投资账户',
                     border: OutlineInputBorder(),

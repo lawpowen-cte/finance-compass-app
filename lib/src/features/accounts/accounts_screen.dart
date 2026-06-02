@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/asset_snapshot.dart';
+import '../../core/providers/mutations/account_mutations.dart';
+import '../../core/providers/mutations/asset_mutations.dart';
+
 import '../../core/utils/currency_formatter.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
@@ -11,41 +15,19 @@ import 'account_detail_screen.dart';
 import 'account_form_dialog.dart';
 import 'asset_snapshot_form_dialog.dart';
 
-class AccountsScreen extends StatefulWidget {
+class AccountsScreen extends ConsumerStatefulWidget {
   const AccountsScreen({
     super.key,
     required this.repository,
-    required this.onAddAccount,
-    required this.onEditAccount,
-    required this.onDeleteAccount,
-    required this.onAddSnapshot,
-    required this.onEditSnapshot,
-    required this.onDeleteSnapshot,
-    required this.onAddAssetGoal,
-    required this.onUpdateAssetGoal,
-    required this.onDeleteAssetGoal,
-    required this.onSetAccountReconciledMonth,
   });
 
   final FinanceRepository repository;
-  final Future<void> Function(Account account) onAddAccount;
-  final Future<void> Function(Account account) onEditAccount;
-  final Future<bool> Function(String accountId) onDeleteAccount;
-  final Future<void> Function(AssetSnapshot snapshot) onAddSnapshot;
-  final Future<FinanceRepository> Function(AssetSnapshot snapshot)
-      onEditSnapshot;
-  final Future<FinanceRepository> Function(String snapshotId) onDeleteSnapshot;
-  final Future<void> Function(String name, double amount) onAddAssetGoal;
-  final Future<void> Function(AssetGoal goal) onUpdateAssetGoal;
-  final Future<void> Function(String goalId) onDeleteAssetGoal;
-  final Future<void> Function(String accountId, String monthKey)
-      onSetAccountReconciledMonth;
 
   @override
-  State<AccountsScreen> createState() => _AccountsScreenState();
+  ConsumerState<AccountsScreen> createState() => _AccountsScreenState();
 }
 
-class _AccountsScreenState extends State<AccountsScreen> {
+class _AccountsScreenState extends ConsumerState<AccountsScreen> {
   String? selectedCutoffMonth = _currentMonthKey();
 
   @override
@@ -95,7 +77,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
         SectionCard(
           title: '统计截止',
           child: DropdownButtonFormField<String>(
-            initialValue: effectiveCutoffMonth,
+            value: effectiveCutoffMonth,
             decoration: const InputDecoration(
               labelText: '截至月份',
               border: OutlineInputBorder(),
@@ -259,8 +241,6 @@ class _AccountsScreenState extends State<AccountsScreen> {
                         builder: (_) => AccountDetailScreen(
                           account: account,
                           repository: repository,
-                          onEditSnapshot: widget.onEditSnapshot,
-                          onDeleteSnapshot: widget.onDeleteSnapshot,
                         ),
                       ),
                     ),
@@ -460,15 +440,18 @@ class _AccountsScreenState extends State<AccountsScreen> {
       return;
     }
     if (initialGoal == null) {
-      await widget.onAddAssetGoal(result.name, result.amount!);
+      await ref.read(accountMutationsProvider.notifier).addAssetGoal(
+            name: result.name,
+            amount: result.amount!,
+          );
       return;
     }
-    await widget.onUpdateAssetGoal(
-      initialGoal.copyWith(
-        name: result.name,
-        targetAmount: result.amount!,
-      ),
-    );
+    await ref.read(accountMutationsProvider.notifier).updateAssetGoal(
+          initialGoal.copyWith(
+            name: result.name,
+            targetAmount: result.amount!,
+          ),
+        );
   }
 
   Future<void> _deleteGoal(BuildContext context, AssetGoal goal) async {
@@ -476,7 +459,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('删除资产目标'),
-            content: Text('确定删除“${goal.name}”吗？'),
+            content: Text('确定删除"${goal.name}"吗？'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
@@ -493,7 +476,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
     if (!context.mounted || !confirmed) {
       return;
     }
-    await widget.onDeleteAssetGoal(goal.id);
+    await ref.read(accountMutationsProvider.notifier).deleteAssetGoal(goal.id);
   }
 
   Future<void> _showAddAccount(BuildContext context) async {
@@ -504,7 +487,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
     if (!context.mounted || result == null) {
       return;
     }
-    await widget.onAddAccount(result);
+    await ref.read(accountMutationsProvider.notifier).addAccount(result);
   }
 
   Future<void> _showAddSnapshot(BuildContext context) async {
@@ -515,10 +498,11 @@ class _AccountsScreenState extends State<AccountsScreen> {
     if (!context.mounted || result == null) {
       return;
     }
-    await widget.onAddSnapshot(result);
+    await ref.read(assetMutationsProvider.notifier).addSnapshot(result);
   }
 
-  Future<void> _showEditAccount(BuildContext context, Account account) async {
+  Future<void> _showEditAccount(
+      BuildContext context, Account account) async {
     final result = await showDialog<Account>(
       context: context,
       builder: (_) => AccountFormDialog(initialAccount: account),
@@ -526,12 +510,14 @@ class _AccountsScreenState extends State<AccountsScreen> {
     if (!context.mounted || result == null) {
       return;
     }
-    await widget.onEditAccount(result);
+    await ref.read(accountMutationsProvider.notifier).updateAccount(result);
   }
 
   Future<void> _attemptDeleteAccount(
       BuildContext context, Account account) async {
-    final deleted = await widget.onDeleteAccount(account.id);
+    final deleted = await ref
+        .read(accountMutationsProvider.notifier)
+        .deleteAccount(account.id);
     if (!context.mounted) {
       return;
     }
@@ -556,7 +542,9 @@ class _AccountsScreenState extends State<AccountsScreen> {
       return;
     }
     if (value == 'reconcile') {
-      await widget.onSetAccountReconciledMonth(account.id, cutoffMonth);
+      await ref
+          .read(accountMutationsProvider.notifier)
+          .setAccountReconciledMonth(account.id, cutoffMonth);
       if (!context.mounted) {
         return;
       }
@@ -1007,18 +995,13 @@ class _SnapshotSummary extends StatelessWidget {
                   '现金余额 ${formatMoney(displayedCashBalance, currency: currency)}'),
               Text(
                 '未实现盈亏 ${formatMoney(pnl, currency: currency)} (${(ratio * 100).toStringAsFixed(1)}%)',
-                style: TextStyle(color: pnlColor, fontWeight: FontWeight.w700),
+                style: TextStyle(
+                  color: pnlColor,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
-          if (trendValues.length > 1) ...[
-            const SizedBox(height: 10),
-            MiniSparkline(
-              points: trendValues,
-              color:
-                  pnl >= 0 ? const Color(0xFF15803D) : const Color(0xFF0F766E),
-            ),
-          ],
         ],
       ),
     );
@@ -1039,16 +1022,16 @@ class _SummaryChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: Theme.of(context).cardColor.withValues(alpha: 0.8),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Theme.of(context).cardColor),
+        borderRadius: BorderRadius.circular(12),
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.65),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 4),
-          Text(value, style: Theme.of(context).textTheme.titleMedium),
+          Text(label, style: Theme.of(context).textTheme.labelSmall),
+          const SizedBox(height: 2),
+          Text(value, style: Theme.of(context).textTheme.titleSmall),
         ],
       ),
     );
@@ -1067,18 +1050,18 @@ class _MetricChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.78),
         borderRadius: BorderRadius.circular(12),
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.6),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 4),
-          Text(value, style: Theme.of(context).textTheme.titleSmall),
+          Text(label, style: Theme.of(context).textTheme.labelSmall),
+          const SizedBox(height: 2),
+          Text(value, style: Theme.of(context).textTheme.labelLarge),
         ],
       ),
     );

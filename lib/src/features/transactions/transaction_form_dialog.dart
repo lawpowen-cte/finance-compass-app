@@ -119,7 +119,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<TransactionType>(
-                  initialValue: transactionType,
+                  value: transactionType,
                   decoration: const InputDecoration(
                     labelText: '交易类型',
                     border: OutlineInputBorder(),
@@ -143,7 +143,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<TransactionStatus>(
-                  initialValue: transactionStatus,
+                  value: transactionStatus,
                   decoration: const InputDecoration(
                     labelText: '状态',
                     border: OutlineInputBorder(),
@@ -184,7 +184,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                 ],
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
-                  initialValue: accountId,
+                  value: accountId,
                   decoration: const InputDecoration(
                     labelText: '转出账户',
                     border: OutlineInputBorder(),
@@ -209,7 +209,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                 if (transactionType == TransactionType.transfer) ...[
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
-                    initialValue: toAccountId,
+                    value: toAccountId,
                     decoration: const InputDecoration(
                       labelText: '转入账户',
                       border: OutlineInputBorder(),
@@ -237,7 +237,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                 if (categoryOptions.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
-                    initialValue: categoryId,
+                    value: categoryId,
                     decoration: const InputDecoration(
                       labelText: '类别',
                       border: OutlineInputBorder(),
@@ -311,7 +311,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                 if (!_isEditing) ...[
                   const SizedBox(height: 12),
                   DropdownButtonFormField<int>(
-                    initialValue: recurrenceMonths,
+                    value: recurrenceMonths,
                     decoration: const InputDecoration(
                       labelText: '生成周期',
                       border: OutlineInputBorder(),

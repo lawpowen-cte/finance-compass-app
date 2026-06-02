@@ -188,7 +188,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               Expanded(
                 child: DropdownButtonFormField<int?>(
-                  initialValue: selectedYear,
+                  value: selectedYear,
                   decoration: const InputDecoration(
                     labelText: '年份',
                     border: OutlineInputBorder(),
@@ -217,7 +217,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: DropdownButtonFormField<int?>(
-                  initialValue: selectedMonth,
+                  value: selectedMonth,
                   decoration: const InputDecoration(
                     labelText: '月份',
                     border: OutlineInputBorder(),
@@ -279,7 +279,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               DropdownButtonFormField<String>(
-                initialValue: activeBudgetMonth,
+                value: activeBudgetMonth,
                 decoration: const InputDecoration(
                   labelText: '统计月份',
                   border: OutlineInputBorder(),
@@ -665,7 +665,9 @@ class _MetricCard extends StatelessWidget {
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
             child: Text(
-              formatMoneyValue(amount),
+              amount < 0
+                  ? '-${formatMoneyValue(amount)}'
+                  : formatMoneyValue(amount),
               style: theme.textTheme.titleLarge?.copyWith(
                 fontSize: 24,
                 fontWeight: FontWeight.w700,

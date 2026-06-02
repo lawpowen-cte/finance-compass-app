@@ -1,29 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
 import '../../core/models/budget.dart';
+import '../../core/providers/mutations/budget_mutations.dart';
+
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/month_key.dart';
 import '../shared/screen_header.dart';
 import 'budget_form_dialog.dart';
 
-class BudgetsScreen extends StatefulWidget {
+class BudgetsScreen extends ConsumerStatefulWidget {
   const BudgetsScreen({
     super.key,
     required this.repository,
-    required this.onAddBudget,
-    required this.onDeleteBudget,
   });
 
   final FinanceRepository repository;
-  final Future<void> Function(Budget budget) onAddBudget;
-  final Future<void> Function(String budgetId) onDeleteBudget;
 
   @override
-  State<BudgetsScreen> createState() => _BudgetsScreenState();
+  ConsumerState<BudgetsScreen> createState() => _BudgetsScreenState();
 }
 
-class _BudgetsScreenState extends State<BudgetsScreen> {
+class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
   late String _selectedMonth;
   final _expandedBudgetIds = <String>{};
 
@@ -36,11 +35,11 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
   @override
   Widget build(BuildContext context) {
     final repository = widget.repository;
-    final budgets = repository.reusableBudgets();
     final monthOptions = _buildMonthOptions();
     if (!monthOptions.contains(_selectedMonth)) {
       _selectedMonth = monthOptions.first;
     }
+    final budgets = repository.activeBudgetsForMonth(_selectedMonth);
 
     final totalBudget = repository.totalEffectiveBudgetForMonth(_selectedMonth);
     final totalSpent = repository.totalBudgetExpenseForMonth(_selectedMonth);
@@ -70,7 +69,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 DropdownButtonFormField<String>(
-                  initialValue: _selectedMonth,
+                  value: _selectedMonth,
                   decoration: const InputDecoration(
                     labelText: '月份',
                     border: OutlineInputBorder(),
@@ -128,7 +127,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
               });
             },
             onEdit: () => _showEditBudget(context, budget),
-            onDelete: () => widget.onDeleteBudget(budget.id),
+            onDelete: () => _deleteBudget(budget.id),
           ),
         ),
       ],
@@ -149,7 +148,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       builder: (_) => BudgetFormDialog(repository: widget.repository),
     );
     if (result != null) {
-      await widget.onAddBudget(result);
+      await ref.read(budgetMutationsProvider.notifier).addBudget(result);
     }
   }
 
@@ -162,8 +161,12 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       ),
     );
     if (result != null) {
-      await widget.onAddBudget(result);
+      await ref.read(budgetMutationsProvider.notifier).addBudget(result);
     }
+  }
+
+  Future<void> _deleteBudget(String budgetId) async {
+    await ref.read(budgetMutationsProvider.notifier).deleteBudget(budgetId);
   }
 }
 
