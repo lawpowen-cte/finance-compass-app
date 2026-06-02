@@ -24,6 +24,7 @@ class AccountsScreen extends StatefulWidget {
     required this.onAddAssetGoal,
     required this.onUpdateAssetGoal,
     required this.onDeleteAssetGoal,
+    required this.onSetAccountReconciledMonth,
   });
 
   final FinanceRepository repository;
@@ -31,11 +32,14 @@ class AccountsScreen extends StatefulWidget {
   final Future<void> Function(Account account) onEditAccount;
   final Future<bool> Function(String accountId) onDeleteAccount;
   final Future<void> Function(AssetSnapshot snapshot) onAddSnapshot;
-  final Future<FinanceRepository> Function(AssetSnapshot snapshot) onEditSnapshot;
+  final Future<FinanceRepository> Function(AssetSnapshot snapshot)
+      onEditSnapshot;
   final Future<FinanceRepository> Function(String snapshotId) onDeleteSnapshot;
   final Future<void> Function(String name, double amount) onAddAssetGoal;
   final Future<void> Function(AssetGoal goal) onUpdateAssetGoal;
   final Future<void> Function(String goalId) onDeleteAssetGoal;
+  final Future<void> Function(String accountId, String monthKey)
+      onSetAccountReconciledMonth;
 
   @override
   State<AccountsScreen> createState() => _AccountsScreenState();
@@ -54,10 +58,12 @@ class _AccountsScreenState extends State<AccountsScreen> {
       ...repository.snapshots.map((item) => _monthKey(item.snapshotDate)),
     }.toList()
       ..sort((a, b) => b.compareTo(a));
-    final effectiveCutoffMonth =
-        monthKeys.contains(selectedCutoffMonth) ? selectedCutoffMonth! : _currentMonthKey();
+    final effectiveCutoffMonth = monthKeys.contains(selectedCutoffMonth)
+        ? selectedCutoffMonth!
+        : _currentMonthKey();
     final displayCutoff = _endOfMonth(effectiveCutoffMonth);
-    final goalSummaries = repository.assetGoalSummaries(cutoffDate: displayCutoff);
+    final goalSummaries =
+        repository.assetGoalSummaries(cutoffDate: displayCutoff);
     final goalHistory = repository.totalAssetHistory(cutoffDate: displayCutoff);
 
     return ListView(
@@ -136,7 +142,8 @@ class _AccountsScreenState extends State<AccountsScreen> {
         const SizedBox(height: 16),
         SectionCard(
           title: '资产目标',
-          subtitle: goalSummaries.isEmpty ? '设定目标后会自动记录首次达成日期。' : '支持同时追踪多个总资产目标。',
+          subtitle:
+              goalSummaries.isEmpty ? '设定目标后会自动记录首次达成日期。' : '支持同时追踪多个总资产目标。',
           child: goalSummaries.isEmpty
               ? Align(
                   alignment: Alignment.centerLeft,
@@ -212,8 +219,10 @@ class _AccountsScreenState extends State<AccountsScreen> {
                     ..sort((a, b) => b.value.compareTo(a.value));
                   final topCategory = sortedEntries.isEmpty
                       ? '本月暂无支出'
-                      : '${repository.categoryName(sortedEntries.first.key)} ${formatMoney(sortedEntries.first.value)}';
-                  final latestSnapshot = repository.latestSnapshotForAccountUpTo(
+                      : '${repository.categoryName(sortedEntries.first.key)} '
+                          '${formatMoney(sortedEntries.first.value, currency: account.currency)}';
+                  final latestSnapshot =
+                      repository.latestSnapshotForAccountUpTo(
                     account.id,
                     displayCutoff,
                   );
@@ -229,9 +238,18 @@ class _AccountsScreenState extends State<AccountsScreen> {
                     account.id,
                     upToDate: displayCutoff,
                   );
-                  final displayedFlow = repository.investmentFlowSummaryForAccount(
+                  final displayedFlow =
+                      repository.investmentFlowSummaryForAccount(
                     account.id,
                     upToDate: displayCutoff,
+                  );
+                  final reconciledMonth = repository.reconciledMonthForAccount(
+                    account.id,
+                  );
+                  final isReconciledForCutoff =
+                      repository.isAccountReconciledForMonth(
+                    account.id,
+                    effectiveCutoffMonth,
                   );
 
                   return InkWell(
@@ -260,12 +278,25 @@ class _AccountsScreenState extends State<AccountsScreen> {
                                   children: [
                                     Text(
                                       account.name,
-                                      style: Theme.of(context).textTheme.titleSmall,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall,
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      '${_accountTypeLabel(account.accountType)} 路 $topCategory',
-                                      style: Theme.of(context).textTheme.bodySmall,
+                                      '${_accountTypeLabel(account.accountType)} · $topCategory',
+                                      style:
+                                          Theme.of(context).textTheme.bodySmall,
+                                    ),
+                                    const SizedBox(height: 6),
+                                    _StatusPill(
+                                      icon: isReconciledForCutoff
+                                          ? Icons.verified_outlined
+                                          : Icons.pending_actions_outlined,
+                                      label: reconciledMonth == null
+                                          ? '未对账'
+                                          : '已对账到 $reconciledMonth',
+                                      isPositive: isReconciledForCutoff,
                                     ),
                                   ],
                                 ),
@@ -279,21 +310,40 @@ class _AccountsScreenState extends State<AccountsScreen> {
                                       displayedMarketValue,
                                       currency: account.currency,
                                     ),
-                                    style: Theme.of(context).textTheme.titleSmall,
+                                    style:
+                                        Theme.of(context).textTheme.titleSmall,
+                                  ),
+                                  Text(
+                                    repository.conversionHintForAmount(
+                                      displayedMarketValue,
+                                      account.currency,
+                                    ),
+                                    style:
+                                        Theme.of(context).textTheme.labelSmall,
                                   ),
                                   PopupMenuButton<String>(
                                     padding: EdgeInsets.zero,
-                                    onSelected: (value) {
-                                      if (value == 'edit') {
-                                        _showEditAccount(context, account);
-                                      }
-                                      if (value == 'delete') {
-                                        _attemptDeleteAccount(context, account);
-                                      }
-                                    },
+                                    onSelected: (value) => _handleAccountAction(
+                                      context,
+                                      value,
+                                      account,
+                                      effectiveCutoffMonth,
+                                      displayCutoff,
+                                    ),
                                     itemBuilder: (_) => const [
-                                      PopupMenuItem(value: 'edit', child: Text('编辑')),
-                                      PopupMenuItem(value: 'delete', child: Text('删除')),
+                                      PopupMenuItem(
+                                        value: 'trace',
+                                        child: Text('数字追溯'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 'reconcile',
+                                        child: Text('标记已对账'),
+                                      ),
+                                      PopupMenuDivider(),
+                                      PopupMenuItem(
+                                          value: 'edit', child: Text('编辑')),
+                                      PopupMenuItem(
+                                          value: 'delete', child: Text('删除')),
                                     ],
                                   ),
                                 ],
@@ -310,7 +360,8 @@ class _AccountsScreenState extends State<AccountsScreen> {
                               displayedCashBalance: displayedCashBalance,
                               flowSummary: displayedFlow,
                               trendValues: repository
-                                  .snapshotsForAccountUpTo(account.id, displayCutoff)
+                                  .snapshotsForAccountUpTo(
+                                      account.id, displayCutoff)
                                   .map(
                                     (item) => repository.accountBalanceAt(
                                       account.id,
@@ -349,7 +400,9 @@ class _AccountsScreenState extends State<AccountsScreen> {
   }) async {
     final nameController = TextEditingController(text: initialGoal?.name ?? '');
     final amountController = TextEditingController(
-      text: initialGoal == null ? '' : initialGoal.targetAmount.toStringAsFixed(2),
+      text: initialGoal == null
+          ? ''
+          : initialGoal.targetAmount.toStringAsFixed(2),
     );
     final result = await showDialog<_GoalDraft?>(
       context: context,
@@ -368,7 +421,8 @@ class _AccountsScreenState extends State<AccountsScreen> {
             const SizedBox(height: 12),
             TextField(
               controller: amountController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
                 labelText: '目标金额',
                 border: OutlineInputBorder(),
@@ -475,7 +529,8 @@ class _AccountsScreenState extends State<AccountsScreen> {
     await widget.onEditAccount(result);
   }
 
-  Future<void> _attemptDeleteAccount(BuildContext context, Account account) async {
+  Future<void> _attemptDeleteAccount(
+      BuildContext context, Account account) async {
     final deleted = await widget.onDeleteAccount(account.id);
     if (!context.mounted) {
       return;
@@ -489,6 +544,106 @@ class _AccountsScreenState extends State<AccountsScreen> {
     );
   }
 
+  Future<void> _handleAccountAction(
+    BuildContext context,
+    String value,
+    Account account,
+    String cutoffMonth,
+    DateTime cutoffDate,
+  ) async {
+    if (value == 'trace') {
+      _showBalanceTrace(context, account, cutoffDate);
+      return;
+    }
+    if (value == 'reconcile') {
+      await widget.onSetAccountReconciledMonth(account.id, cutoffMonth);
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${account.name} 已对账到 $cutoffMonth')),
+      );
+      return;
+    }
+    if (value == 'edit') {
+      await _showEditAccount(context, account);
+      return;
+    }
+    if (value == 'delete') {
+      await _attemptDeleteAccount(context, account);
+    }
+  }
+
+  void _showBalanceTrace(
+    BuildContext context,
+    Account account,
+    DateTime cutoffDate,
+  ) {
+    final trace = widget.repository.accountBalanceTrace(account.id, cutoffDate);
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${account.name} 数字追溯'),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _TraceSummaryRow(
+                  label: '截止日',
+                  value: _dateLabel(trace.cutoffDate),
+                ),
+                _TraceSummaryRow(
+                  label: trace.sourceLabel,
+                  value: formatMoney(
+                    trace.sourceAmount,
+                    currency: account.currency,
+                  ),
+                ),
+                _TraceSummaryRow(
+                  label: '追溯余额',
+                  value: formatMoney(
+                    trace.endingBalance,
+                    currency: account.currency,
+                  ),
+                  emphasize: true,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '说明：系统以当前余额或最近资产快照为锚点，扣回截止日之后已经记录的交易，得到该时间点余额。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                Divider(color: Theme.of(context).colorScheme.outlineVariant),
+                const SizedBox(height: 8),
+                if (trace.entries.isEmpty)
+                  Text(
+                    '没有截止日之后影响此账户的交易。',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  )
+                else
+                  ...trace.entries.map(
+                    (entry) => _TraceEntryTile(
+                      entry: entry,
+                      currency: account.currency,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
   static String _currentMonthKey() {
     final now = DateTime.now();
     return '${now.year}-${now.month.toString().padLeft(2, '0')}';
@@ -496,6 +651,12 @@ class _AccountsScreenState extends State<AccountsScreen> {
 
   String _monthKey(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}';
+  }
+
+  String _dateLabel(DateTime date) {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
   }
 
   DateTime _endOfMonth(String monthKey) {
@@ -643,6 +804,149 @@ class _GoalDraft {
   final double? amount;
 }
 
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({
+    required this.icon,
+    required this.label,
+    required this.isPositive,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool isPositive;
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        isPositive ? const Color(0xFF15803D) : const Color(0xFFB45309);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: color.withValues(alpha: 0.18)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TraceSummaryRow extends StatelessWidget {
+  const _TraceSummaryRow({
+    required this.label,
+    required this.value,
+    this.emphasize = false,
+  });
+
+  final String label;
+  final String value;
+  final bool emphasize;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = emphasize
+        ? Theme.of(context).textTheme.titleMedium
+        : Theme.of(context).textTheme.bodyMedium;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ),
+          Text(value, style: style),
+        ],
+      ),
+    );
+  }
+}
+
+class _TraceEntryTile extends StatelessWidget {
+  const _TraceEntryTile({
+    required this.entry,
+    required this.currency,
+  });
+
+  final AccountBalanceTraceEntry entry;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    final deltaColor =
+        entry.delta >= 0 ? const Color(0xFF15803D) : const Color(0xFFB91C1C);
+    final date =
+        '${entry.date.year}-${entry.date.month.toString().padLeft(2, '0')}-${entry.date.day.toString().padLeft(2, '0')}';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.68),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: Theme.of(context)
+              .colorScheme
+              .outlineVariant
+              .withValues(alpha: 0.55),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  entry.title,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                formatMoney(entry.delta, currency: currency),
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: deltaColor,
+                    ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(entry.subtitle, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 4,
+            children: [
+              Text(date, style: Theme.of(context).textTheme.labelSmall),
+              Text(
+                '调整后 ${formatMoney(entry.runningBalance, currency: currency)}',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SnapshotSummary extends StatelessWidget {
   const _SnapshotSummary({
     required this.snapshot,
@@ -664,11 +968,13 @@ class _SnapshotSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final remainingCostBasis =
-        (displayedCostBasis - flowSummary.withdrawal).clamp(0, double.infinity).toDouble();
+    final remainingCostBasis = (displayedCostBasis - flowSummary.withdrawal)
+        .clamp(0, double.infinity)
+        .toDouble();
     final pnl = displayedMarketValue - remainingCostBasis;
     final ratio = remainingCostBasis == 0 ? 0.0 : pnl / remainingCostBasis;
-    final pnlColor = pnl >= 0 ? const Color(0xFF15803D) : const Color(0xFFB91C1C);
+    final pnlColor =
+        pnl >= 0 ? const Color(0xFF15803D) : const Color(0xFFB91C1C);
 
     return Container(
       width: double.infinity,
@@ -689,11 +995,16 @@ class _SnapshotSummary extends StatelessWidget {
             spacing: 14,
             runSpacing: 8,
             children: [
-              Text('总市值 ${formatMoney(displayedMarketValue, currency: currency)}'),
-              Text('累计投入 ${formatMoney(flowSummary.contribution, currency: currency)}'),
-              Text('累计取出 ${formatMoney(flowSummary.withdrawal, currency: currency)}'),
-              Text('累计成本 ${formatMoney(displayedCostBasis, currency: currency)}'),
-              Text('现金余额 ${formatMoney(displayedCashBalance, currency: currency)}'),
+              Text(
+                  '总市值 ${formatMoney(displayedMarketValue, currency: currency)}'),
+              Text(
+                  '累计投入 ${formatMoney(flowSummary.contribution, currency: currency)}'),
+              Text(
+                  '累计取出 ${formatMoney(flowSummary.withdrawal, currency: currency)}'),
+              Text(
+                  '累计成本 ${formatMoney(displayedCostBasis, currency: currency)}'),
+              Text(
+                  '现金余额 ${formatMoney(displayedCashBalance, currency: currency)}'),
               Text(
                 '未实现盈亏 ${formatMoney(pnl, currency: currency)} (${(ratio * 100).toStringAsFixed(1)}%)',
                 style: TextStyle(color: pnlColor, fontWeight: FontWeight.w700),
@@ -704,7 +1015,8 @@ class _SnapshotSummary extends StatelessWidget {
             const SizedBox(height: 10),
             MiniSparkline(
               points: trendValues,
-              color: pnl >= 0 ? const Color(0xFF15803D) : const Color(0xFF0F766E),
+              color:
+                  pnl >= 0 ? const Color(0xFF15803D) : const Color(0xFF0F766E),
             ),
           ],
         ],

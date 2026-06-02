@@ -10,6 +10,7 @@ import '../../core/models/category.dart';
 import '../../core/models/transaction.dart';
 import '../../core/settings/app_settings_controller.dart';
 import '../../core/theme/finance_theme.dart';
+import '../../core/utils/currency_formatter.dart';
 import '../accounts/accounts_screen.dart';
 import '../budgets/budgets_screen.dart';
 import '../dashboard/dashboard_screen.dart';
@@ -50,8 +51,8 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      final loadedRepository =
-          await (widget.repositoryFuture ?? FinanceRepository.load(DatabaseProvider.instance));
+      final loadedRepository = await (widget.repositoryFuture ??
+          FinanceRepository.load(DatabaseProvider.instance));
       if (!mounted) {
         return;
       }
@@ -92,7 +93,8 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<FinanceRepository> _replaceRepositoryAndReturn(Future<FinanceRepository> future) async {
+  Future<FinanceRepository> _replaceRepositoryAndReturn(
+      Future<FinanceRepository> future) async {
     setState(() => isBusy = true);
     try {
       final nextRepository = await future;
@@ -152,11 +154,59 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleUpdateTransaction(FinanceTransaction transaction) {
-    return _replaceRepository(repository!.updateExistingTransaction(transaction));
+    return _replaceRepository(
+        repository!.updateExistingTransaction(transaction));
   }
 
   Future<void> _handleDeleteTransaction(String transactionId) {
-    return _replaceRepository(repository!.deleteExistingTransaction(transactionId));
+    return _replaceRepository(
+        repository!.deleteExistingTransaction(transactionId));
+  }
+
+  Future<void> _handleAddTransactionTemplate(
+    String name,
+    FinanceTransaction transaction,
+  ) {
+    return _replaceRepository(
+      repository!.addTransactionTemplate(
+        name: name,
+        transaction: transaction,
+      ),
+    );
+  }
+
+  Future<void> _handleDeleteTransactionTemplate(String templateId) {
+    return _replaceRepository(
+        repository!.deleteTransactionTemplate(templateId));
+  }
+
+  Future<void> _handleAddRecurringTransactionRule(
+    String name,
+    FinanceTransaction transaction,
+    int intervalMonths,
+  ) {
+    return _replaceRepository(
+      repository!.addRecurringTransactionRule(
+        name: name,
+        transaction: transaction,
+        intervalMonths: intervalMonths,
+      ),
+    );
+  }
+
+  Future<void> _handleDeleteRecurringTransactionRule(String ruleId) {
+    return _replaceRepository(
+        repository!.deleteRecurringTransactionRule(ruleId));
+  }
+
+  Future<void> _handleGenerateRecurringTransactions(
+    String ruleId,
+    int monthsAhead,
+  ) {
+    return _replaceRepository(
+      repository!
+          .generateRecurringTransactions(ruleId, monthsAhead: monthsAhead),
+    );
   }
 
   Future<void> _handleAddSnapshot(AssetSnapshot snapshot) {
@@ -164,11 +214,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<FinanceRepository> _handleUpdateSnapshot(AssetSnapshot snapshot) {
-    return _replaceRepositoryAndReturn(repository!.updateExistingAssetSnapshot(snapshot));
+    return _replaceRepositoryAndReturn(
+        repository!.updateExistingAssetSnapshot(snapshot));
   }
 
   Future<FinanceRepository> _handleDeleteSnapshot(String snapshotId) {
-    return _replaceRepositoryAndReturn(repository!.deleteExistingAssetSnapshot(snapshotId));
+    return _replaceRepositoryAndReturn(
+        repository!.deleteExistingAssetSnapshot(snapshotId));
   }
 
   Future<void> _handleLoadExampleData() {
@@ -187,6 +239,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _handleDeleteAssetGoal(String goalId) {
     return _replaceRepository(repository!.deleteAssetGoal(goalId));
+  }
+
+  Future<void> _handleSetAccountReconciledMonth(
+    String accountId,
+    String monthKey,
+  ) {
+    return _replaceRepository(
+      repository!.setAccountReconciledMonth(accountId, monthKey),
+    );
+  }
+
+  Future<void> _handleUpdateExchangeRates(
+    Map<String, double> ratesToBase,
+    List<String> currencyPriority,
+  ) {
+    return _replaceRepository(
+      repository!.updateExchangeRates(ratesToBase, currencyPriority),
+    );
   }
 
   Future<Uint8List> _handleExportJsonBytes() {
@@ -263,6 +333,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     final currentRepository = repository!;
+    setActiveBaseCurrency(currentRepository.baseCurrency);
     final palette = paletteForStyle(widget.settingsController.themeStyle);
     final screens = [
       DashboardScreen(repository: currentRepository),
@@ -277,6 +348,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onAddAssetGoal: _handleAddAssetGoal,
         onUpdateAssetGoal: _handleUpdateAssetGoal,
         onDeleteAssetGoal: _handleDeleteAssetGoal,
+        onSetAccountReconciledMonth: _handleSetAccountReconciledMonth,
       ),
       TransactionsScreen(
         repository: currentRepository,
@@ -284,6 +356,11 @@ class _HomeScreenState extends State<HomeScreen> {
         onAddTransactions: _handleAddTransactions,
         onEditTransaction: _handleUpdateTransaction,
         onDeleteTransaction: _handleDeleteTransaction,
+        onAddTransactionTemplate: _handleAddTransactionTemplate,
+        onDeleteTransactionTemplate: _handleDeleteTransactionTemplate,
+        onAddRecurringTransactionRule: _handleAddRecurringTransactionRule,
+        onDeleteRecurringTransactionRule: _handleDeleteRecurringTransactionRule,
+        onGenerateRecurringTransactions: _handleGenerateRecurringTransactions,
         onAddCategory: _handleAddCategory,
         onUpdateCategory: _handleUpdateCategory,
         onDeleteCategory: _handleDeleteCategory,
@@ -295,8 +372,10 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       ReportsScreen(repository: currentRepository),
       SettingsScreen(
+        repository: currentRepository,
         settingsController: widget.settingsController,
         onLoadExampleData: _handleLoadExampleData,
+        onUpdateExchangeRates: _handleUpdateExchangeRates,
         onExportJsonBytes: _handleExportJsonBytes,
         onExportAiSummaryBytes: _handleExportAiSummaryBytes,
         onExportFuturePlanningBytes: _handleExportFuturePlanningBytes,
@@ -326,7 +405,8 @@ class _HomeScreenState extends State<HomeScreen> {
               selectedIndex: selectedIndex,
               labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
               destinations: const [
-                NavigationDestination(icon: Icon(Icons.dashboard_outlined), label: ''),
+                NavigationDestination(
+                    icon: Icon(Icons.dashboard_outlined), label: ''),
                 NavigationDestination(
                   icon: Icon(Icons.account_balance_wallet_outlined),
                   label: '',
@@ -335,9 +415,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   icon: Icon(Icons.receipt_long_outlined),
                   label: '',
                 ),
-                NavigationDestination(icon: Icon(Icons.savings_outlined), label: ''),
-                NavigationDestination(icon: Icon(Icons.insights_outlined), label: ''),
-                NavigationDestination(icon: Icon(Icons.tune_outlined), label: ''),
+                NavigationDestination(
+                    icon: Icon(Icons.savings_outlined), label: ''),
+                NavigationDestination(
+                    icon: Icon(Icons.insights_outlined), label: ''),
+                NavigationDestination(
+                    icon: Icon(Icons.tune_outlined), label: ''),
               ],
               onDestinationSelected: (index) {
                 setState(() => selectedIndex = index);

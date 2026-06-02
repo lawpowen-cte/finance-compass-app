@@ -4,6 +4,7 @@ class Budget {
     required this.categoryId,
     required this.monthKey,
     required this.amount,
+    this.currency = 'MYR',
     this.alertThreshold = 0.8,
     this.rolloverEnabled = false,
   });
@@ -12,6 +13,7 @@ class Budget {
   final String categoryId;
   final String monthKey;
   final double amount;
+  final String currency;
   final double alertThreshold;
   final bool rolloverEnabled;
 }

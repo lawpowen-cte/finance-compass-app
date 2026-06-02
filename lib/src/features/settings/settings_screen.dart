@@ -1,21 +1,26 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
+import 'package:open_filex/open_filex.dart';
 
 import '../../core/data/finance_repository.dart';
 import '../../core/settings/app_settings_controller.dart';
 import '../../core/settings/app_theme_style.dart';
 import '../../core/theme/finance_theme.dart';
+import '../../core/utils/currency_formatter.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
+    required this.repository,
     required this.settingsController,
     required this.onLoadExampleData,
+    required this.onUpdateExchangeRates,
     required this.onExportJsonBytes,
     required this.onExportAiSummaryBytes,
     required this.onExportFuturePlanningBytes,
@@ -23,8 +28,13 @@ class SettingsScreen extends StatefulWidget {
     required this.onPreviewImportJson,
   });
 
+  final FinanceRepository repository;
   final AppSettingsController settingsController;
   final Future<void> Function() onLoadExampleData;
+  final Future<void> Function(
+    Map<String, double> ratesToBase,
+    List<String> currencyPriority,
+  ) onUpdateExchangeRates;
   final Future<Uint8List> Function() onExportJsonBytes;
   final Future<Uint8List> Function() onExportAiSummaryBytes;
   final Future<Uint8List> Function() onExportFuturePlanningBytes;
@@ -37,6 +47,42 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isBusy = false;
+  final _rateControllers = <String, TextEditingController>{};
+  var _currencyOrder = <String>[];
+
+  @override
+  void initState() {
+    super.initState();
+    _syncRateControllers();
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository.metaValues != widget.repository.metaValues) {
+      _syncRateControllers();
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _rateControllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  void _syncRateControllers() {
+    _currencyOrder = widget.repository.currencyPriority;
+    final rates = widget.repository.exchangeRatesToBase;
+    for (final currency in supportedCurrencies) {
+      final controller = _rateControllers.putIfAbsent(
+        currency,
+        TextEditingController.new,
+      );
+      controller.text = (rates[currency] ?? 1).toStringAsFixed(4);
+    }
+  }
 
   Future<void> _runBusyTask(Future<void> Function() task) async {
     if (_isBusy) {
@@ -52,20 +98,93 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _saveExchangeRates() async {
+    final baseCurrency = _currencyOrder.first;
+    final nextRates = <String, double>{baseCurrency: 1};
+    for (final currency
+        in _currencyOrder.where((item) => item != baseCurrency)) {
+      final rate = double.tryParse(_rateControllers[currency]!.text.trim());
+      if (rate == null || rate <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '请填写有效汇率：1 $currency = ? ${currencyLabel(baseCurrency)}',
+            ),
+          ),
+        );
+        return;
+      }
+      nextRates[currency] = rate;
+    }
+    await _runBusyTask(() async {
+      await widget.onUpdateExchangeRates(nextRates, _currencyOrder);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('汇率和优先级已更新')),
+      );
+    });
+  }
+
+  void _moveCurrency(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) {
+        newIndex -= 1;
+      }
+      final oldBase = _currencyOrder.first;
+      final moved = _currencyOrder.removeAt(oldIndex);
+      _currencyOrder.insert(newIndex, moved);
+      final newBase = _currencyOrder.first;
+      if (oldBase != newBase) {
+        _recalculateRateFieldsForBase(newBase);
+      }
+    });
+  }
+
+  void _recalculateRateFieldsForBase(String nextBaseCurrency) {
+    for (final currency in supportedCurrencies) {
+      final controller = _rateControllers[currency]!;
+      if (currency == nextBaseCurrency) {
+        controller.text = '1.0000';
+        continue;
+      }
+      final converted = widget.repository.convertAmount(
+        amount: 1,
+        fromCurrency: currency,
+        toCurrency: nextBaseCurrency,
+      );
+      controller.text = converted.toStringAsFixed(4);
+    }
+  }
+
   Future<void> _exportJson({
     required String fileName,
     required Future<Uint8List> Function() bytesBuilder,
     required String successLabel,
+    String Function(Uint8List bytes)? validateBytes,
+    bool openAfterSave = false,
   }) async {
     await _runBusyTask(() async {
       final bytes = await bytesBuilder();
       if (bytes.isEmpty) {
-        if (!mounted) {
-          return;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('导出内容为空，未保存文件。')),
+          );
         }
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('导出内容为空，未保存文件。')));
+        return;
+      }
+
+      String? validationLabel;
+      try {
+        validationLabel = validateBytes?.call(bytes);
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('导出校验失败：$error')),
+          );
+        }
         return;
       }
 
@@ -76,20 +195,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
         mimeType: MimeType.custom,
         customMimeType: 'application/json',
       );
-
+      if (openAfterSave && savedPath != null && savedPath.trim().isNotEmpty) {
+        await OpenFilex.open(
+          savedPath,
+          type: 'application/json',
+        );
+      }
       if (!mounted) {
         return;
       }
-
-      if (savedPath == null || savedPath.trim().isEmpty) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('没有完成保存。')));
-        return;
-      }
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$successLabel\n$savedPath\n大小 ${bytes.length} bytes')),
+        SnackBar(
+          content: Text(
+            savedPath == null || savedPath.trim().isEmpty
+                ? '没有完成保存。'
+                : '$successLabel\n$savedPath\n大小 ${bytes.length} bytes'
+                    '${validationLabel == null ? '' : '\n$validationLabel'}',
+          ),
+        ),
       );
     });
   }
@@ -102,12 +225,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _runBusyTask(() async {
       final bytes = await bytesBuilder();
       if (bytes.isEmpty) {
-        if (!mounted) {
-          return;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('导出内容为空，未保存文件。')),
+          );
         }
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('导出内容为空，未保存文件。')),
-        );
         return;
       }
 
@@ -118,20 +240,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         mimeType: MimeType.custom,
         customMimeType: 'text/csv',
       );
-
       if (!mounted) {
         return;
       }
-
-      if (savedPath == null || savedPath.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('没有完成保存。')),
-        );
-        return;
-      }
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$successLabel\n$savedPath\n大小 ${bytes.length} bytes')),
+        SnackBar(
+          content: Text(
+            savedPath == null || savedPath.trim().isEmpty
+                ? '没有完成保存。'
+                : '$successLabel\n$savedPath\n大小 ${bytes.length} bytes',
+          ),
+        ),
       );
     });
   }
@@ -143,7 +262,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         type: FileType.custom,
         allowedExtensions: const ['json'],
       );
-
       final path = result?.files.single.path;
       if (path == null || path.isEmpty || !mounted) {
         return;
@@ -153,7 +271,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) {
         return;
       }
-
       final totalItems = preview.accounts +
           preview.categories +
           preview.budgets +
@@ -161,103 +278,110 @@ class _SettingsScreenState extends State<SettingsScreen> {
           preview.assetSnapshots;
       if (totalItems == 0) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('这个 JSON 没有可导入的数据，可能是旧版空导出文件。')),
+          const SnackBar(content: Text('这个 JSON 没有可导入的数据。')),
         );
         return;
       }
 
       final shouldImport = await showDialog<bool>(
             context: context,
-            builder: (context) {
-              return AlertDialog(
-                title: const Text('导入预览'),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('导出时间: ${preview.exportedAt ?? '-'}'),
-                    Text('账户: ${preview.accounts}'),
-                    Text('类别: ${preview.categories}'),
-                    Text('预算: ${preview.budgets}'),
-                    Text('交易: ${preview.transactions}'),
-                    Text('资产快照: ${preview.assetSnapshots}'),
-                    const SizedBox(height: 12),
-                    const Text('导入后会覆盖当前资料。'),
-                  ],
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: const Text('取消'),
-                  ),
-                  FilledButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: const Text('确认导入'),
-                  ),
+            builder: (context) => AlertDialog(
+              title: const Text('导入预览'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('导出时间: ${preview.exportedAt ?? '-'}'),
+                  Text('账户: ${preview.accounts}'),
+                  Text('类别: ${preview.categories}'),
+                  Text('预算: ${preview.budgets}'),
+                  Text('交易: ${preview.transactions}'),
+                  Text('资产快照: ${preview.assetSnapshots}'),
+                  const SizedBox(height: 12),
+                  const Text('导入后会覆盖当前资料。'),
                 ],
-              );
-            },
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('确认导入'),
+                ),
+              ],
+            ),
           ) ??
           false;
-
       if (!shouldImport || !mounted) {
         return;
       }
 
       await widget.onImportJson(path);
-      if (!mounted) {
-        return;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('导入完成')),
+        );
       }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '导入完成：${preview.accounts} 账户，${preview.categories} 类别，'
-            '${preview.budgets} 预算，${preview.transactions} 交易，'
-            '${preview.assetSnapshots} 快照。',
-          ),
-        ),
-      );
     });
   }
 
   Future<void> _loadExampleData() async {
-    final confirmed =
-            await showDialog<bool>(
-              context: context,
-              builder: (context) {
-                return AlertDialog(
-                  title: const Text('写入示例资料'),
-                  content: const Text('这会覆盖当前资料，并写入示例数据。'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(false),
-                      child: const Text('取消'),
-                    ),
-                    FilledButton(
-                      onPressed: () => Navigator.of(context).pop(true),
-                      child: const Text('确认'),
-                    ),
-                  ],
-                );
-              },
-            ) ??
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('写入示例资料'),
+            content: const Text('这会覆盖当前资料，并写入示例数据。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('确认'),
+              ),
+            ],
+          ),
+        ) ??
         false;
-
     if (!confirmed || !mounted) {
       return;
     }
-
     await _runBusyTask(() async {
       await widget.onLoadExampleData();
-      if (!mounted) {
-        return;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('示例资料已写入。')),
+        );
       }
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('示例资料已写入。')));
     });
+  }
+
+  String _validateFullJsonExport(Uint8List bytes) {
+    final decoded = jsonDecode(utf8.decode(bytes));
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('JSON 根节点不是对象');
+    }
+    final accounts = _jsonListCount(decoded, 'accounts');
+    final categories = _jsonListCount(decoded, 'categories');
+    final budgets = _jsonListCount(decoded, 'budgets');
+    final transactions = _jsonListCount(decoded, 'transactions');
+    final snapshots = _jsonListCount(decoded, 'asset_snapshots');
+    if (decoded['meta'] is! Map<String, dynamic>) {
+      throw const FormatException('缺少应用元资料 meta');
+    }
+    return '校验通过：$accounts 账户，$categories 类别，$budgets 预算，'
+        '$transactions 交易，$snapshots 快照。';
+  }
+
+  int _jsonListCount(Map<String, dynamic> decoded, String key) {
+    final value = decoded[key];
+    if (value is List) {
+      return value.length;
+    }
+    throw FormatException('缺少 $key 列表');
   }
 
   @override
@@ -276,7 +400,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 spacing: 10,
                 runSpacing: 10,
                 children: AppThemeStyle.values.map((style) {
-                  final selected = style == widget.settingsController.themeStyle;
+                  final selected =
+                      style == widget.settingsController.themeStyle;
                   return _ThemePreviewChip(
                     style: style,
                     label: _themeLabel(style),
@@ -284,6 +409,73 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onTap: () => widget.settingsController.setThemeStyle(style),
                   );
                 }).toList(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SectionCard(
+              title: '汇率优先级',
+              subtitle: '拖动排序：第一个是主币种，第二个是提示用的次币种。',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    height: 224,
+                    child: ReorderableListView.builder(
+                      shrinkWrap: true,
+                      buildDefaultDragHandles: false,
+                      itemCount: _currencyOrder.length,
+                      onReorder: _moveCurrency,
+                      itemBuilder: (context, index) {
+                        final currency = _currencyOrder[index];
+                        final isBase = index == 0;
+                        return ListTile(
+                          key: ValueKey(currency),
+                          contentPadding: EdgeInsets.zero,
+                          leading: ReorderableDragStartListener(
+                            index: index,
+                            child: const Icon(Icons.drag_indicator),
+                          ),
+                          title: Text(currencyOptionLabel(currency)),
+                          subtitle: Text(
+                            isBase
+                                ? '主币种：所有总额用这个单位显示'
+                                : index == 1
+                                    ? '次币种：主币种账户会提示这个换算值'
+                                    : '可用于账户和交易',
+                          ),
+                          trailing: isBase
+                              ? const Icon(Icons.star_rounded)
+                              : Text('#${index + 1}'),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ..._currencyOrder
+                      .where((item) => item != _currencyOrder.first)
+                      .map((currency) {
+                    final base = _currencyOrder.first;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: TextField(
+                        controller: _rateControllers[currency],
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: '1 $currency = ? ${currencyLabel(base)}',
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    );
+                  }),
+                  FilledButton.tonalIcon(
+                    onPressed: _isBusy ? null : _saveExchangeRates,
+                    icon: const Icon(Icons.currency_exchange_outlined),
+                    label: const Text('保存汇率和优先级'),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 16),
@@ -303,6 +495,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   fileName: 'finance_compass_export',
                                   bytesBuilder: widget.onExportJsonBytes,
                                   successLabel: 'JSON 已保存到',
+                                  validateBytes: _validateFullJsonExport,
                                 ),
                         icon: const Icon(Icons.download_outlined),
                         label: const Text('导出 JSON'),
@@ -314,6 +507,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   fileName: 'finance_compass_ai_summary',
                                   bytesBuilder: widget.onExportAiSummaryBytes,
                                   successLabel: 'AI 摘要已保存到',
+                                  openAfterSave: true,
                                 ),
                         icon: const Icon(Icons.auto_awesome_outlined),
                         label: const Text('导出 AI 摘要'),
@@ -323,7 +517,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ? null
                             : () => _exportCsv(
                                   fileName: 'finance_compass_future_planning',
-                                  bytesBuilder: widget.onExportFuturePlanningBytes,
+                                  bytesBuilder:
+                                      widget.onExportFuturePlanningBytes,
                                   successLabel: '未来规划表已保存到',
                                 ),
                         icon: const Icon(Icons.table_chart_outlined),
@@ -333,7 +528,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    '完整 JSON 会包含账户、类别、预算、交易、资产快照和应用元资料。AI 摘要只保留汇总数据。',
+                    '完整 JSON 包含账户、类别、预算、交易、快照和应用元资料；AI 摘要只保留汇总数据。',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -342,20 +537,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 16),
             SectionCard(
               title: '资料导入',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  FilledButton.tonalIcon(
-                    onPressed: _isBusy ? null : _pickAndImportJson,
-                    icon: const Icon(Icons.upload_file_outlined),
-                    label: const Text('导入 JSON'),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    '导入前会先显示预览，并在确认后覆盖当前资料。',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
+              child: FilledButton.tonalIcon(
+                onPressed: _isBusy ? null : _pickAndImportJson,
+                icon: const Icon(Icons.upload_file_outlined),
+                label: const Text('导入 JSON'),
               ),
             ),
             const SizedBox(height: 16),

@@ -895,6 +895,14 @@ class $BudgetsTable extends Budgets with TableInfo<$BudgetsTable, Budget> {
   late final GeneratedColumn<double> amount = GeneratedColumn<double>(
       'amount', aliasedName, false,
       type: DriftSqlType.double, requiredDuringInsert: true);
+  static const VerificationMeta _currencyMeta =
+      const VerificationMeta('currency');
+  @override
+  late final GeneratedColumn<String> currency = GeneratedColumn<String>(
+      'currency', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('MYR'));
   static const VerificationMeta _alertThresholdMeta =
       const VerificationMeta('alertThreshold');
   @override
@@ -927,6 +935,7 @@ class $BudgetsTable extends Budgets with TableInfo<$BudgetsTable, Budget> {
         categoryId,
         monthKey,
         amount,
+        currency,
         alertThreshold,
         rolloverEnabled,
         createdAt
@@ -966,6 +975,10 @@ class $BudgetsTable extends Budgets with TableInfo<$BudgetsTable, Budget> {
     } else if (isInserting) {
       context.missing(_amountMeta);
     }
+    if (data.containsKey('currency')) {
+      context.handle(_currencyMeta,
+          currency.isAcceptableOrUnknown(data['currency']!, _currencyMeta));
+    }
     if (data.containsKey('alert_threshold')) {
       context.handle(
           _alertThresholdMeta,
@@ -999,6 +1012,8 @@ class $BudgetsTable extends Budgets with TableInfo<$BudgetsTable, Budget> {
           .read(DriftSqlType.string, data['${effectivePrefix}month_key'])!,
       amount: attachedDatabase.typeMapping
           .read(DriftSqlType.double, data['${effectivePrefix}amount'])!,
+      currency: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}currency'])!,
       alertThreshold: attachedDatabase.typeMapping.read(
           DriftSqlType.double, data['${effectivePrefix}alert_threshold'])!,
       rolloverEnabled: attachedDatabase.typeMapping
@@ -1019,6 +1034,7 @@ class Budget extends DataClass implements Insertable<Budget> {
   final String categoryId;
   final String monthKey;
   final double amount;
+  final String currency;
   final double alertThreshold;
   final bool rolloverEnabled;
   final DateTime createdAt;
@@ -1027,6 +1043,7 @@ class Budget extends DataClass implements Insertable<Budget> {
       required this.categoryId,
       required this.monthKey,
       required this.amount,
+      required this.currency,
       required this.alertThreshold,
       required this.rolloverEnabled,
       required this.createdAt});
@@ -1037,6 +1054,7 @@ class Budget extends DataClass implements Insertable<Budget> {
     map['category_id'] = Variable<String>(categoryId);
     map['month_key'] = Variable<String>(monthKey);
     map['amount'] = Variable<double>(amount);
+    map['currency'] = Variable<String>(currency);
     map['alert_threshold'] = Variable<double>(alertThreshold);
     map['rollover_enabled'] = Variable<bool>(rolloverEnabled);
     map['created_at'] = Variable<DateTime>(createdAt);
@@ -1049,6 +1067,7 @@ class Budget extends DataClass implements Insertable<Budget> {
       categoryId: Value(categoryId),
       monthKey: Value(monthKey),
       amount: Value(amount),
+      currency: Value(currency),
       alertThreshold: Value(alertThreshold),
       rolloverEnabled: Value(rolloverEnabled),
       createdAt: Value(createdAt),
@@ -1063,6 +1082,7 @@ class Budget extends DataClass implements Insertable<Budget> {
       categoryId: serializer.fromJson<String>(json['categoryId']),
       monthKey: serializer.fromJson<String>(json['monthKey']),
       amount: serializer.fromJson<double>(json['amount']),
+      currency: serializer.fromJson<String>(json['currency']),
       alertThreshold: serializer.fromJson<double>(json['alertThreshold']),
       rolloverEnabled: serializer.fromJson<bool>(json['rolloverEnabled']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
@@ -1076,6 +1096,7 @@ class Budget extends DataClass implements Insertable<Budget> {
       'categoryId': serializer.toJson<String>(categoryId),
       'monthKey': serializer.toJson<String>(monthKey),
       'amount': serializer.toJson<double>(amount),
+      'currency': serializer.toJson<String>(currency),
       'alertThreshold': serializer.toJson<double>(alertThreshold),
       'rolloverEnabled': serializer.toJson<bool>(rolloverEnabled),
       'createdAt': serializer.toJson<DateTime>(createdAt),
@@ -1087,6 +1108,7 @@ class Budget extends DataClass implements Insertable<Budget> {
           String? categoryId,
           String? monthKey,
           double? amount,
+          String? currency,
           double? alertThreshold,
           bool? rolloverEnabled,
           DateTime? createdAt}) =>
@@ -1095,6 +1117,7 @@ class Budget extends DataClass implements Insertable<Budget> {
         categoryId: categoryId ?? this.categoryId,
         monthKey: monthKey ?? this.monthKey,
         amount: amount ?? this.amount,
+        currency: currency ?? this.currency,
         alertThreshold: alertThreshold ?? this.alertThreshold,
         rolloverEnabled: rolloverEnabled ?? this.rolloverEnabled,
         createdAt: createdAt ?? this.createdAt,
@@ -1106,6 +1129,7 @@ class Budget extends DataClass implements Insertable<Budget> {
           data.categoryId.present ? data.categoryId.value : this.categoryId,
       monthKey: data.monthKey.present ? data.monthKey.value : this.monthKey,
       amount: data.amount.present ? data.amount.value : this.amount,
+      currency: data.currency.present ? data.currency.value : this.currency,
       alertThreshold: data.alertThreshold.present
           ? data.alertThreshold.value
           : this.alertThreshold,
@@ -1123,6 +1147,7 @@ class Budget extends DataClass implements Insertable<Budget> {
           ..write('categoryId: $categoryId, ')
           ..write('monthKey: $monthKey, ')
           ..write('amount: $amount, ')
+          ..write('currency: $currency, ')
           ..write('alertThreshold: $alertThreshold, ')
           ..write('rolloverEnabled: $rolloverEnabled, ')
           ..write('createdAt: $createdAt')
@@ -1131,7 +1156,7 @@ class Budget extends DataClass implements Insertable<Budget> {
   }
 
   @override
-  int get hashCode => Object.hash(id, categoryId, monthKey, amount,
+  int get hashCode => Object.hash(id, categoryId, monthKey, amount, currency,
       alertThreshold, rolloverEnabled, createdAt);
   @override
   bool operator ==(Object other) =>
@@ -1141,6 +1166,7 @@ class Budget extends DataClass implements Insertable<Budget> {
           other.categoryId == this.categoryId &&
           other.monthKey == this.monthKey &&
           other.amount == this.amount &&
+          other.currency == this.currency &&
           other.alertThreshold == this.alertThreshold &&
           other.rolloverEnabled == this.rolloverEnabled &&
           other.createdAt == this.createdAt);
@@ -1151,6 +1177,7 @@ class BudgetsCompanion extends UpdateCompanion<Budget> {
   final Value<String> categoryId;
   final Value<String> monthKey;
   final Value<double> amount;
+  final Value<String> currency;
   final Value<double> alertThreshold;
   final Value<bool> rolloverEnabled;
   final Value<DateTime> createdAt;
@@ -1160,6 +1187,7 @@ class BudgetsCompanion extends UpdateCompanion<Budget> {
     this.categoryId = const Value.absent(),
     this.monthKey = const Value.absent(),
     this.amount = const Value.absent(),
+    this.currency = const Value.absent(),
     this.alertThreshold = const Value.absent(),
     this.rolloverEnabled = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -1170,6 +1198,7 @@ class BudgetsCompanion extends UpdateCompanion<Budget> {
     required String categoryId,
     required String monthKey,
     required double amount,
+    this.currency = const Value.absent(),
     this.alertThreshold = const Value.absent(),
     this.rolloverEnabled = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -1183,6 +1212,7 @@ class BudgetsCompanion extends UpdateCompanion<Budget> {
     Expression<String>? categoryId,
     Expression<String>? monthKey,
     Expression<double>? amount,
+    Expression<String>? currency,
     Expression<double>? alertThreshold,
     Expression<bool>? rolloverEnabled,
     Expression<DateTime>? createdAt,
@@ -1193,6 +1223,7 @@ class BudgetsCompanion extends UpdateCompanion<Budget> {
       if (categoryId != null) 'category_id': categoryId,
       if (monthKey != null) 'month_key': monthKey,
       if (amount != null) 'amount': amount,
+      if (currency != null) 'currency': currency,
       if (alertThreshold != null) 'alert_threshold': alertThreshold,
       if (rolloverEnabled != null) 'rollover_enabled': rolloverEnabled,
       if (createdAt != null) 'created_at': createdAt,
@@ -1205,6 +1236,7 @@ class BudgetsCompanion extends UpdateCompanion<Budget> {
       Value<String>? categoryId,
       Value<String>? monthKey,
       Value<double>? amount,
+      Value<String>? currency,
       Value<double>? alertThreshold,
       Value<bool>? rolloverEnabled,
       Value<DateTime>? createdAt,
@@ -1214,6 +1246,7 @@ class BudgetsCompanion extends UpdateCompanion<Budget> {
       categoryId: categoryId ?? this.categoryId,
       monthKey: monthKey ?? this.monthKey,
       amount: amount ?? this.amount,
+      currency: currency ?? this.currency,
       alertThreshold: alertThreshold ?? this.alertThreshold,
       rolloverEnabled: rolloverEnabled ?? this.rolloverEnabled,
       createdAt: createdAt ?? this.createdAt,
@@ -1235,6 +1268,9 @@ class BudgetsCompanion extends UpdateCompanion<Budget> {
     }
     if (amount.present) {
       map['amount'] = Variable<double>(amount.value);
+    }
+    if (currency.present) {
+      map['currency'] = Variable<String>(currency.value);
     }
     if (alertThreshold.present) {
       map['alert_threshold'] = Variable<double>(alertThreshold.value);
@@ -1258,6 +1294,7 @@ class BudgetsCompanion extends UpdateCompanion<Budget> {
           ..write('categoryId: $categoryId, ')
           ..write('monthKey: $monthKey, ')
           ..write('amount: $amount, ')
+          ..write('currency: $currency, ')
           ..write('alertThreshold: $alertThreshold, ')
           ..write('rolloverEnabled: $rolloverEnabled, ')
           ..write('createdAt: $createdAt, ')
@@ -1321,12 +1358,41 @@ class $TransactionsTable extends Transactions
   late final GeneratedColumn<String> currency = GeneratedColumn<String>(
       'currency', aliasedName, false,
       type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _toAmountMeta =
+      const VerificationMeta('toAmount');
+  @override
+  late final GeneratedColumn<double> toAmount = GeneratedColumn<double>(
+      'to_amount', aliasedName, true,
+      type: DriftSqlType.double, requiredDuringInsert: false);
+  static const VerificationMeta _toCurrencyMeta =
+      const VerificationMeta('toCurrency');
+  @override
+  late final GeneratedColumn<String> toCurrency = GeneratedColumn<String>(
+      'to_currency', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _recordDateMeta =
+      const VerificationMeta('recordDate');
+  @override
+  late final GeneratedColumn<DateTime> recordDate = GeneratedColumn<DateTime>(
+      'record_date', aliasedName, true,
+      type: DriftSqlType.dateTime, requiredDuringInsert: false);
   static const VerificationMeta _transactionDateMeta =
       const VerificationMeta('transactionDate');
   @override
   late final GeneratedColumn<DateTime> transactionDate =
       GeneratedColumn<DateTime>('transaction_date', aliasedName, false,
           type: DriftSqlType.dateTime, requiredDuringInsert: true);
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+      'status', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _recurringRuleIdMeta =
+      const VerificationMeta('recurringRuleId');
+  @override
+  late final GeneratedColumn<String> recurringRuleId = GeneratedColumn<String>(
+      'recurring_rule_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _descriptionMeta =
       const VerificationMeta('description');
   @override
@@ -1364,7 +1430,12 @@ class $TransactionsTable extends Transactions
         categoryId,
         amount,
         currency,
+        toAmount,
+        toCurrency,
+        recordDate,
         transactionDate,
+        status,
+        recurringRuleId,
         description,
         merchant,
         createdAt,
@@ -1421,6 +1492,22 @@ class $TransactionsTable extends Transactions
     } else if (isInserting) {
       context.missing(_currencyMeta);
     }
+    if (data.containsKey('to_amount')) {
+      context.handle(_toAmountMeta,
+          toAmount.isAcceptableOrUnknown(data['to_amount']!, _toAmountMeta));
+    }
+    if (data.containsKey('to_currency')) {
+      context.handle(
+          _toCurrencyMeta,
+          toCurrency.isAcceptableOrUnknown(
+              data['to_currency']!, _toCurrencyMeta));
+    }
+    if (data.containsKey('record_date')) {
+      context.handle(
+          _recordDateMeta,
+          recordDate.isAcceptableOrUnknown(
+              data['record_date']!, _recordDateMeta));
+    }
     if (data.containsKey('transaction_date')) {
       context.handle(
           _transactionDateMeta,
@@ -1428,6 +1515,16 @@ class $TransactionsTable extends Transactions
               data['transaction_date']!, _transactionDateMeta));
     } else if (isInserting) {
       context.missing(_transactionDateMeta);
+    }
+    if (data.containsKey('status')) {
+      context.handle(_statusMeta,
+          status.isAcceptableOrUnknown(data['status']!, _statusMeta));
+    }
+    if (data.containsKey('recurring_rule_id')) {
+      context.handle(
+          _recurringRuleIdMeta,
+          recurringRuleId.isAcceptableOrUnknown(
+              data['recurring_rule_id']!, _recurringRuleIdMeta));
     }
     if (data.containsKey('description')) {
       context.handle(
@@ -1470,8 +1567,18 @@ class $TransactionsTable extends Transactions
           .read(DriftSqlType.double, data['${effectivePrefix}amount'])!,
       currency: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}currency'])!,
+      toAmount: attachedDatabase.typeMapping
+          .read(DriftSqlType.double, data['${effectivePrefix}to_amount']),
+      toCurrency: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}to_currency']),
+      recordDate: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}record_date']),
       transactionDate: attachedDatabase.typeMapping.read(
           DriftSqlType.dateTime, data['${effectivePrefix}transaction_date'])!,
+      status: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}status']),
+      recurringRuleId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}recurring_rule_id']),
       description: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}description']),
       merchant: attachedDatabase.typeMapping
@@ -1497,7 +1604,12 @@ class Transaction extends DataClass implements Insertable<Transaction> {
   final String? categoryId;
   final double amount;
   final String currency;
+  final double? toAmount;
+  final String? toCurrency;
+  final DateTime? recordDate;
   final DateTime transactionDate;
+  final String? status;
+  final String? recurringRuleId;
   final String? description;
   final String? merchant;
   final DateTime createdAt;
@@ -1510,7 +1622,12 @@ class Transaction extends DataClass implements Insertable<Transaction> {
       this.categoryId,
       required this.amount,
       required this.currency,
+      this.toAmount,
+      this.toCurrency,
+      this.recordDate,
       required this.transactionDate,
+      this.status,
+      this.recurringRuleId,
       this.description,
       this.merchant,
       required this.createdAt,
@@ -1529,7 +1646,22 @@ class Transaction extends DataClass implements Insertable<Transaction> {
     }
     map['amount'] = Variable<double>(amount);
     map['currency'] = Variable<String>(currency);
+    if (!nullToAbsent || toAmount != null) {
+      map['to_amount'] = Variable<double>(toAmount);
+    }
+    if (!nullToAbsent || toCurrency != null) {
+      map['to_currency'] = Variable<String>(toCurrency);
+    }
+    if (!nullToAbsent || recordDate != null) {
+      map['record_date'] = Variable<DateTime>(recordDate);
+    }
     map['transaction_date'] = Variable<DateTime>(transactionDate);
+    if (!nullToAbsent || status != null) {
+      map['status'] = Variable<String>(status);
+    }
+    if (!nullToAbsent || recurringRuleId != null) {
+      map['recurring_rule_id'] = Variable<String>(recurringRuleId);
+    }
     if (!nullToAbsent || description != null) {
       map['description'] = Variable<String>(description);
     }
@@ -1554,7 +1686,21 @@ class Transaction extends DataClass implements Insertable<Transaction> {
           : Value(categoryId),
       amount: Value(amount),
       currency: Value(currency),
+      toAmount: toAmount == null && nullToAbsent
+          ? const Value.absent()
+          : Value(toAmount),
+      toCurrency: toCurrency == null && nullToAbsent
+          ? const Value.absent()
+          : Value(toCurrency),
+      recordDate: recordDate == null && nullToAbsent
+          ? const Value.absent()
+          : Value(recordDate),
       transactionDate: Value(transactionDate),
+      status:
+          status == null && nullToAbsent ? const Value.absent() : Value(status),
+      recurringRuleId: recurringRuleId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(recurringRuleId),
       description: description == null && nullToAbsent
           ? const Value.absent()
           : Value(description),
@@ -1577,7 +1723,12 @@ class Transaction extends DataClass implements Insertable<Transaction> {
       categoryId: serializer.fromJson<String?>(json['categoryId']),
       amount: serializer.fromJson<double>(json['amount']),
       currency: serializer.fromJson<String>(json['currency']),
+      toAmount: serializer.fromJson<double?>(json['toAmount']),
+      toCurrency: serializer.fromJson<String?>(json['toCurrency']),
+      recordDate: serializer.fromJson<DateTime?>(json['recordDate']),
       transactionDate: serializer.fromJson<DateTime>(json['transactionDate']),
+      status: serializer.fromJson<String?>(json['status']),
+      recurringRuleId: serializer.fromJson<String?>(json['recurringRuleId']),
       description: serializer.fromJson<String?>(json['description']),
       merchant: serializer.fromJson<String?>(json['merchant']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
@@ -1595,7 +1746,12 @@ class Transaction extends DataClass implements Insertable<Transaction> {
       'categoryId': serializer.toJson<String?>(categoryId),
       'amount': serializer.toJson<double>(amount),
       'currency': serializer.toJson<String>(currency),
+      'toAmount': serializer.toJson<double?>(toAmount),
+      'toCurrency': serializer.toJson<String?>(toCurrency),
+      'recordDate': serializer.toJson<DateTime?>(recordDate),
       'transactionDate': serializer.toJson<DateTime>(transactionDate),
+      'status': serializer.toJson<String?>(status),
+      'recurringRuleId': serializer.toJson<String?>(recurringRuleId),
       'description': serializer.toJson<String?>(description),
       'merchant': serializer.toJson<String?>(merchant),
       'createdAt': serializer.toJson<DateTime>(createdAt),
@@ -1611,7 +1767,12 @@ class Transaction extends DataClass implements Insertable<Transaction> {
           Value<String?> categoryId = const Value.absent(),
           double? amount,
           String? currency,
+          Value<double?> toAmount = const Value.absent(),
+          Value<String?> toCurrency = const Value.absent(),
+          Value<DateTime?> recordDate = const Value.absent(),
           DateTime? transactionDate,
+          Value<String?> status = const Value.absent(),
+          Value<String?> recurringRuleId = const Value.absent(),
           Value<String?> description = const Value.absent(),
           Value<String?> merchant = const Value.absent(),
           DateTime? createdAt,
@@ -1624,7 +1785,14 @@ class Transaction extends DataClass implements Insertable<Transaction> {
         categoryId: categoryId.present ? categoryId.value : this.categoryId,
         amount: amount ?? this.amount,
         currency: currency ?? this.currency,
+        toAmount: toAmount.present ? toAmount.value : this.toAmount,
+        toCurrency: toCurrency.present ? toCurrency.value : this.toCurrency,
+        recordDate: recordDate.present ? recordDate.value : this.recordDate,
         transactionDate: transactionDate ?? this.transactionDate,
+        status: status.present ? status.value : this.status,
+        recurringRuleId: recurringRuleId.present
+            ? recurringRuleId.value
+            : this.recurringRuleId,
         description: description.present ? description.value : this.description,
         merchant: merchant.present ? merchant.value : this.merchant,
         createdAt: createdAt ?? this.createdAt,
@@ -1641,9 +1809,18 @@ class Transaction extends DataClass implements Insertable<Transaction> {
           data.categoryId.present ? data.categoryId.value : this.categoryId,
       amount: data.amount.present ? data.amount.value : this.amount,
       currency: data.currency.present ? data.currency.value : this.currency,
+      toAmount: data.toAmount.present ? data.toAmount.value : this.toAmount,
+      toCurrency:
+          data.toCurrency.present ? data.toCurrency.value : this.toCurrency,
+      recordDate:
+          data.recordDate.present ? data.recordDate.value : this.recordDate,
       transactionDate: data.transactionDate.present
           ? data.transactionDate.value
           : this.transactionDate,
+      status: data.status.present ? data.status.value : this.status,
+      recurringRuleId: data.recurringRuleId.present
+          ? data.recurringRuleId.value
+          : this.recurringRuleId,
       description:
           data.description.present ? data.description.value : this.description,
       merchant: data.merchant.present ? data.merchant.value : this.merchant,
@@ -1662,7 +1839,12 @@ class Transaction extends DataClass implements Insertable<Transaction> {
           ..write('categoryId: $categoryId, ')
           ..write('amount: $amount, ')
           ..write('currency: $currency, ')
+          ..write('toAmount: $toAmount, ')
+          ..write('toCurrency: $toCurrency, ')
+          ..write('recordDate: $recordDate, ')
           ..write('transactionDate: $transactionDate, ')
+          ..write('status: $status, ')
+          ..write('recurringRuleId: $recurringRuleId, ')
           ..write('description: $description, ')
           ..write('merchant: $merchant, ')
           ..write('createdAt: $createdAt, ')
@@ -1680,7 +1862,12 @@ class Transaction extends DataClass implements Insertable<Transaction> {
       categoryId,
       amount,
       currency,
+      toAmount,
+      toCurrency,
+      recordDate,
       transactionDate,
+      status,
+      recurringRuleId,
       description,
       merchant,
       createdAt,
@@ -1696,7 +1883,12 @@ class Transaction extends DataClass implements Insertable<Transaction> {
           other.categoryId == this.categoryId &&
           other.amount == this.amount &&
           other.currency == this.currency &&
+          other.toAmount == this.toAmount &&
+          other.toCurrency == this.toCurrency &&
+          other.recordDate == this.recordDate &&
           other.transactionDate == this.transactionDate &&
+          other.status == this.status &&
+          other.recurringRuleId == this.recurringRuleId &&
           other.description == this.description &&
           other.merchant == this.merchant &&
           other.createdAt == this.createdAt &&
@@ -1711,7 +1903,12 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
   final Value<String?> categoryId;
   final Value<double> amount;
   final Value<String> currency;
+  final Value<double?> toAmount;
+  final Value<String?> toCurrency;
+  final Value<DateTime?> recordDate;
   final Value<DateTime> transactionDate;
+  final Value<String?> status;
+  final Value<String?> recurringRuleId;
   final Value<String?> description;
   final Value<String?> merchant;
   final Value<DateTime> createdAt;
@@ -1725,7 +1922,12 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
     this.categoryId = const Value.absent(),
     this.amount = const Value.absent(),
     this.currency = const Value.absent(),
+    this.toAmount = const Value.absent(),
+    this.toCurrency = const Value.absent(),
+    this.recordDate = const Value.absent(),
     this.transactionDate = const Value.absent(),
+    this.status = const Value.absent(),
+    this.recurringRuleId = const Value.absent(),
     this.description = const Value.absent(),
     this.merchant = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -1740,7 +1942,12 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
     this.categoryId = const Value.absent(),
     required double amount,
     required String currency,
+    this.toAmount = const Value.absent(),
+    this.toCurrency = const Value.absent(),
+    this.recordDate = const Value.absent(),
     required DateTime transactionDate,
+    this.status = const Value.absent(),
+    this.recurringRuleId = const Value.absent(),
     this.description = const Value.absent(),
     this.merchant = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -1760,7 +1967,12 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
     Expression<String>? categoryId,
     Expression<double>? amount,
     Expression<String>? currency,
+    Expression<double>? toAmount,
+    Expression<String>? toCurrency,
+    Expression<DateTime>? recordDate,
     Expression<DateTime>? transactionDate,
+    Expression<String>? status,
+    Expression<String>? recurringRuleId,
     Expression<String>? description,
     Expression<String>? merchant,
     Expression<DateTime>? createdAt,
@@ -1775,7 +1987,12 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
       if (categoryId != null) 'category_id': categoryId,
       if (amount != null) 'amount': amount,
       if (currency != null) 'currency': currency,
+      if (toAmount != null) 'to_amount': toAmount,
+      if (toCurrency != null) 'to_currency': toCurrency,
+      if (recordDate != null) 'record_date': recordDate,
       if (transactionDate != null) 'transaction_date': transactionDate,
+      if (status != null) 'status': status,
+      if (recurringRuleId != null) 'recurring_rule_id': recurringRuleId,
       if (description != null) 'description': description,
       if (merchant != null) 'merchant': merchant,
       if (createdAt != null) 'created_at': createdAt,
@@ -1792,7 +2009,12 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
       Value<String?>? categoryId,
       Value<double>? amount,
       Value<String>? currency,
+      Value<double?>? toAmount,
+      Value<String?>? toCurrency,
+      Value<DateTime?>? recordDate,
       Value<DateTime>? transactionDate,
+      Value<String?>? status,
+      Value<String?>? recurringRuleId,
       Value<String?>? description,
       Value<String?>? merchant,
       Value<DateTime>? createdAt,
@@ -1806,7 +2028,12 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
       categoryId: categoryId ?? this.categoryId,
       amount: amount ?? this.amount,
       currency: currency ?? this.currency,
+      toAmount: toAmount ?? this.toAmount,
+      toCurrency: toCurrency ?? this.toCurrency,
+      recordDate: recordDate ?? this.recordDate,
       transactionDate: transactionDate ?? this.transactionDate,
+      status: status ?? this.status,
+      recurringRuleId: recurringRuleId ?? this.recurringRuleId,
       description: description ?? this.description,
       merchant: merchant ?? this.merchant,
       createdAt: createdAt ?? this.createdAt,
@@ -1839,8 +2066,23 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
     if (currency.present) {
       map['currency'] = Variable<String>(currency.value);
     }
+    if (toAmount.present) {
+      map['to_amount'] = Variable<double>(toAmount.value);
+    }
+    if (toCurrency.present) {
+      map['to_currency'] = Variable<String>(toCurrency.value);
+    }
+    if (recordDate.present) {
+      map['record_date'] = Variable<DateTime>(recordDate.value);
+    }
     if (transactionDate.present) {
       map['transaction_date'] = Variable<DateTime>(transactionDate.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (recurringRuleId.present) {
+      map['recurring_rule_id'] = Variable<String>(recurringRuleId.value);
     }
     if (description.present) {
       map['description'] = Variable<String>(description.value);
@@ -1870,7 +2112,12 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
           ..write('categoryId: $categoryId, ')
           ..write('amount: $amount, ')
           ..write('currency: $currency, ')
+          ..write('toAmount: $toAmount, ')
+          ..write('toCurrency: $toCurrency, ')
+          ..write('recordDate: $recordDate, ')
           ..write('transactionDate: $transactionDate, ')
+          ..write('status: $status, ')
+          ..write('recurringRuleId: $recurringRuleId, ')
           ..write('description: $description, ')
           ..write('merchant: $merchant, ')
           ..write('createdAt: $createdAt, ')
@@ -3208,6 +3455,7 @@ typedef $$BudgetsTableCreateCompanionBuilder = BudgetsCompanion Function({
   required String categoryId,
   required String monthKey,
   required double amount,
+  Value<String> currency,
   Value<double> alertThreshold,
   Value<bool> rolloverEnabled,
   Value<DateTime> createdAt,
@@ -3218,6 +3466,7 @@ typedef $$BudgetsTableUpdateCompanionBuilder = BudgetsCompanion Function({
   Value<String> categoryId,
   Value<String> monthKey,
   Value<double> amount,
+  Value<String> currency,
   Value<double> alertThreshold,
   Value<bool> rolloverEnabled,
   Value<DateTime> createdAt,
@@ -3261,6 +3510,9 @@ class $$BudgetsTableFilterComposer
 
   ColumnFilters<double> get amount => $composableBuilder(
       column: $table.amount, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get currency => $composableBuilder(
+      column: $table.currency, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<double> get alertThreshold => $composableBuilder(
       column: $table.alertThreshold,
@@ -3312,6 +3564,9 @@ class $$BudgetsTableOrderingComposer
   ColumnOrderings<double> get amount => $composableBuilder(
       column: $table.amount, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get currency => $composableBuilder(
+      column: $table.currency, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<double> get alertThreshold => $composableBuilder(
       column: $table.alertThreshold,
       builder: (column) => ColumnOrderings(column));
@@ -3361,6 +3616,9 @@ class $$BudgetsTableAnnotationComposer
 
   GeneratedColumn<double> get amount =>
       $composableBuilder(column: $table.amount, builder: (column) => column);
+
+  GeneratedColumn<String> get currency =>
+      $composableBuilder(column: $table.currency, builder: (column) => column);
 
   GeneratedColumn<double> get alertThreshold => $composableBuilder(
       column: $table.alertThreshold, builder: (column) => column);
@@ -3419,6 +3677,7 @@ class $$BudgetsTableTableManager extends RootTableManager<
             Value<String> categoryId = const Value.absent(),
             Value<String> monthKey = const Value.absent(),
             Value<double> amount = const Value.absent(),
+            Value<String> currency = const Value.absent(),
             Value<double> alertThreshold = const Value.absent(),
             Value<bool> rolloverEnabled = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
@@ -3429,6 +3688,7 @@ class $$BudgetsTableTableManager extends RootTableManager<
             categoryId: categoryId,
             monthKey: monthKey,
             amount: amount,
+            currency: currency,
             alertThreshold: alertThreshold,
             rolloverEnabled: rolloverEnabled,
             createdAt: createdAt,
@@ -3439,6 +3699,7 @@ class $$BudgetsTableTableManager extends RootTableManager<
             required String categoryId,
             required String monthKey,
             required double amount,
+            Value<String> currency = const Value.absent(),
             Value<double> alertThreshold = const Value.absent(),
             Value<bool> rolloverEnabled = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
@@ -3449,6 +3710,7 @@ class $$BudgetsTableTableManager extends RootTableManager<
             categoryId: categoryId,
             monthKey: monthKey,
             amount: amount,
+            currency: currency,
             alertThreshold: alertThreshold,
             rolloverEnabled: rolloverEnabled,
             createdAt: createdAt,
@@ -3517,7 +3779,12 @@ typedef $$TransactionsTableCreateCompanionBuilder = TransactionsCompanion
   Value<String?> categoryId,
   required double amount,
   required String currency,
+  Value<double?> toAmount,
+  Value<String?> toCurrency,
+  Value<DateTime?> recordDate,
   required DateTime transactionDate,
+  Value<String?> status,
+  Value<String?> recurringRuleId,
   Value<String?> description,
   Value<String?> merchant,
   Value<DateTime> createdAt,
@@ -3533,7 +3800,12 @@ typedef $$TransactionsTableUpdateCompanionBuilder = TransactionsCompanion
   Value<String?> categoryId,
   Value<double> amount,
   Value<String> currency,
+  Value<double?> toAmount,
+  Value<String?> toCurrency,
+  Value<DateTime?> recordDate,
   Value<DateTime> transactionDate,
+  Value<String?> status,
+  Value<String?> recurringRuleId,
   Value<String?> description,
   Value<String?> merchant,
   Value<DateTime> createdAt,
@@ -3612,8 +3884,24 @@ class $$TransactionsTableFilterComposer
   ColumnFilters<String> get currency => $composableBuilder(
       column: $table.currency, builder: (column) => ColumnFilters(column));
 
+  ColumnFilters<double> get toAmount => $composableBuilder(
+      column: $table.toAmount, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get toCurrency => $composableBuilder(
+      column: $table.toCurrency, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get recordDate => $composableBuilder(
+      column: $table.recordDate, builder: (column) => ColumnFilters(column));
+
   ColumnFilters<DateTime> get transactionDate => $composableBuilder(
       column: $table.transactionDate,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get status => $composableBuilder(
+      column: $table.status, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get recurringRuleId => $composableBuilder(
+      column: $table.recurringRuleId,
       builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get description => $composableBuilder(
@@ -3710,8 +3998,24 @@ class $$TransactionsTableOrderingComposer
   ColumnOrderings<String> get currency => $composableBuilder(
       column: $table.currency, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<double> get toAmount => $composableBuilder(
+      column: $table.toAmount, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get toCurrency => $composableBuilder(
+      column: $table.toCurrency, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get recordDate => $composableBuilder(
+      column: $table.recordDate, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<DateTime> get transactionDate => $composableBuilder(
       column: $table.transactionDate,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get status => $composableBuilder(
+      column: $table.status, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get recurringRuleId => $composableBuilder(
+      column: $table.recurringRuleId,
       builder: (column) => ColumnOrderings(column));
 
   ColumnOrderings<String> get description => $composableBuilder(
@@ -3808,8 +4112,23 @@ class $$TransactionsTableAnnotationComposer
   GeneratedColumn<String> get currency =>
       $composableBuilder(column: $table.currency, builder: (column) => column);
 
+  GeneratedColumn<double> get toAmount =>
+      $composableBuilder(column: $table.toAmount, builder: (column) => column);
+
+  GeneratedColumn<String> get toCurrency => $composableBuilder(
+      column: $table.toCurrency, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get recordDate => $composableBuilder(
+      column: $table.recordDate, builder: (column) => column);
+
   GeneratedColumn<DateTime> get transactionDate => $composableBuilder(
       column: $table.transactionDate, builder: (column) => column);
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<String> get recurringRuleId => $composableBuilder(
+      column: $table.recurringRuleId, builder: (column) => column);
 
   GeneratedColumn<String> get description => $composableBuilder(
       column: $table.description, builder: (column) => column);
@@ -3915,7 +4234,12 @@ class $$TransactionsTableTableManager extends RootTableManager<
             Value<String?> categoryId = const Value.absent(),
             Value<double> amount = const Value.absent(),
             Value<String> currency = const Value.absent(),
+            Value<double?> toAmount = const Value.absent(),
+            Value<String?> toCurrency = const Value.absent(),
+            Value<DateTime?> recordDate = const Value.absent(),
             Value<DateTime> transactionDate = const Value.absent(),
+            Value<String?> status = const Value.absent(),
+            Value<String?> recurringRuleId = const Value.absent(),
             Value<String?> description = const Value.absent(),
             Value<String?> merchant = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
@@ -3930,7 +4254,12 @@ class $$TransactionsTableTableManager extends RootTableManager<
             categoryId: categoryId,
             amount: amount,
             currency: currency,
+            toAmount: toAmount,
+            toCurrency: toCurrency,
+            recordDate: recordDate,
             transactionDate: transactionDate,
+            status: status,
+            recurringRuleId: recurringRuleId,
             description: description,
             merchant: merchant,
             createdAt: createdAt,
@@ -3945,7 +4274,12 @@ class $$TransactionsTableTableManager extends RootTableManager<
             Value<String?> categoryId = const Value.absent(),
             required double amount,
             required String currency,
+            Value<double?> toAmount = const Value.absent(),
+            Value<String?> toCurrency = const Value.absent(),
+            Value<DateTime?> recordDate = const Value.absent(),
             required DateTime transactionDate,
+            Value<String?> status = const Value.absent(),
+            Value<String?> recurringRuleId = const Value.absent(),
             Value<String?> description = const Value.absent(),
             Value<String?> merchant = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
@@ -3960,7 +4294,12 @@ class $$TransactionsTableTableManager extends RootTableManager<
             categoryId: categoryId,
             amount: amount,
             currency: currency,
+            toAmount: toAmount,
+            toCurrency: toCurrency,
+            recordDate: recordDate,
             transactionDate: transactionDate,
+            status: status,
+            recurringRuleId: recurringRuleId,
             description: description,
             merchant: merchant,
             createdAt: createdAt,

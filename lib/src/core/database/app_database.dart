@@ -34,7 +34,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -44,6 +44,20 @@ class AppDatabase extends _$AppDatabase {
         onUpgrade: (m, from, to) async {
           if (from < 2) {
             await m.createTable(appMeta);
+          }
+          if (from < 3) {
+            await m.addColumn(transactions, transactions.recordDate);
+          }
+          if (from < 4) {
+            await m.addColumn(transactions, transactions.status);
+            await m.addColumn(transactions, transactions.recurringRuleId);
+          }
+          if (from < 5) {
+            await m.addColumn(transactions, transactions.toAmount);
+            await m.addColumn(transactions, transactions.toCurrency);
+          }
+          if (from < 6) {
+            await m.addColumn(budgets, budgets.currency);
           }
         },
       );
@@ -91,6 +105,7 @@ class AppDatabase extends _$AppDatabase {
             categoryId: row.categoryId,
             monthKey: row.monthKey,
             amount: row.amount,
+            currency: row.currency,
             alertThreshold: row.alertThreshold,
             rolloverEnabled: row.rolloverEnabled,
           ),
@@ -110,7 +125,14 @@ class AppDatabase extends _$AppDatabase {
             categoryId: row.categoryId,
             amount: row.amount,
             currency: row.currency,
+            toAmount: row.toAmount,
+            toCurrency: row.toCurrency,
+            recordDate: row.recordDate ?? row.transactionDate,
             transactionDate: row.transactionDate,
+            status: row.status == null
+                ? model.TransactionStatus.actual
+                : enumByName(model.TransactionStatus.values, row.status!),
+            recurringRuleId: row.recurringRuleId,
             description: row.description,
             merchant: row.merchant,
           ),
@@ -142,7 +164,8 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<bool> hasCompletedSeed() async {
-    final row = await (select(appMeta)..where((tbl) => tbl.key.equals('seed_completed')))
+    final row = await (select(appMeta)
+          ..where((tbl) => tbl.key.equals('seed_completed')))
         .getSingleOrNull();
     return row?.value == 'true';
   }
@@ -157,7 +180,9 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<String?> getMetaValue(String keyValue) async {
-    final row = await (select(appMeta)..where((tbl) => tbl.key.equals(keyValue))).getSingleOrNull();
+    final row = await (select(appMeta)
+          ..where((tbl) => tbl.key.equals(keyValue)))
+        .getSingleOrNull();
     return row?.value;
   }
 
@@ -230,6 +255,7 @@ class AppDatabase extends _$AppDatabase {
                 categoryId: item.categoryId,
                 monthKey: item.monthKey,
                 amount: item.amount,
+                currency: Value(item.currency),
                 alertThreshold: Value(item.alertThreshold),
                 rolloverEnabled: Value(item.rolloverEnabled),
               ),
@@ -246,7 +272,12 @@ class AppDatabase extends _$AppDatabase {
                 accountId: item.accountId,
                 amount: item.amount,
                 currency: item.currency,
+                toAmount: Value(item.toAmount),
+                toCurrency: Value(item.toCurrency),
+                recordDate: Value(item.recordDate),
                 transactionDate: item.transactionDate,
+                status: Value(item.status.name),
+                recurringRuleId: Value(item.recurringRuleId),
                 toAccountId: Value(item.toAccountId),
                 categoryId: Value(item.categoryId),
                 description: Value(item.description),
@@ -358,7 +389,9 @@ class AppDatabase extends _$AppDatabase {
 
   Future<bool> accountHasLinkedData(String accountId) async {
     final ownedTransactions = await ((select(transactions)
-          ..where((tbl) => tbl.accountId.equals(accountId) | tbl.toAccountId.equals(accountId))
+          ..where((tbl) =>
+              tbl.accountId.equals(accountId) |
+              tbl.toAccountId.equals(accountId))
           ..limit(1)))
         .getSingleOrNull();
     if (ownedTransactions != null) {
@@ -393,7 +426,8 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> updateCategory(model.Category category) {
-    return (update(categories)..where((tbl) => tbl.id.equals(category.id))).write(
+    return (update(categories)..where((tbl) => tbl.id.equals(category.id)))
+        .write(
       CategoriesCompanion(
         name: Value(category.name),
         type: Value(category.type.name),
@@ -403,15 +437,17 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<bool> categoryHasLinkedData(String categoryId) async {
-    final linkedTransaction =
-        await ((select(transactions)..where((tbl) => tbl.categoryId.equals(categoryId))..limit(1)))
-            .getSingleOrNull();
+    final linkedTransaction = await ((select(transactions)
+          ..where((tbl) => tbl.categoryId.equals(categoryId))
+          ..limit(1)))
+        .getSingleOrNull();
     if (linkedTransaction != null) {
       return true;
     }
-    final linkedBudget =
-        await ((select(budgets)..where((tbl) => tbl.categoryId.equals(categoryId))..limit(1)))
-            .getSingleOrNull();
+    final linkedBudget = await ((select(budgets)
+          ..where((tbl) => tbl.categoryId.equals(categoryId))
+          ..limit(1)))
+        .getSingleOrNull();
     return linkedBudget != null;
   }
 
@@ -424,19 +460,25 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> upsertBudget(model.Budget budget) async {
-    final existing = await (select(budgets)..where((tbl) => tbl.id.equals(budget.id))).getSingleOrNull();
+    final existing = await (select(budgets)
+          ..where((tbl) => tbl.id.equals(budget.id)))
+        .getSingleOrNull();
 
     if (existing == null) {
       final sameMonthRule = await (select(budgets)
-            ..where((tbl) => tbl.categoryId.equals(budget.categoryId) & tbl.monthKey.equals(budget.monthKey)))
+            ..where((tbl) =>
+                tbl.categoryId.equals(budget.categoryId) &
+                tbl.monthKey.equals(budget.monthKey)))
           .getSingleOrNull();
 
       if (sameMonthRule != null) {
-        await (update(budgets)..where((tbl) => tbl.id.equals(sameMonthRule.id))).write(
+        await (update(budgets)..where((tbl) => tbl.id.equals(sameMonthRule.id)))
+            .write(
           BudgetsCompanion(
             categoryId: Value(budget.categoryId),
             monthKey: Value(budget.monthKey),
             amount: Value(budget.amount),
+            currency: Value(budget.currency),
             alertThreshold: Value(budget.alertThreshold),
             rolloverEnabled: Value(budget.rolloverEnabled),
           ),
@@ -452,6 +494,7 @@ class AppDatabase extends _$AppDatabase {
           categoryId: budget.categoryId,
           monthKey: budget.monthKey,
           amount: budget.amount,
+          currency: Value(budget.currency),
           alertThreshold: Value(budget.alertThreshold),
           rolloverEnabled: Value(budget.rolloverEnabled),
         ),
@@ -464,6 +507,7 @@ class AppDatabase extends _$AppDatabase {
         categoryId: Value(budget.categoryId),
         monthKey: Value(budget.monthKey),
         amount: Value(budget.amount),
+        currency: Value(budget.currency),
         alertThreshold: Value(budget.alertThreshold),
         rolloverEnabled: Value(budget.rolloverEnabled),
       ),
@@ -483,7 +527,12 @@ class AppDatabase extends _$AppDatabase {
           accountId: entry.accountId,
           amount: entry.amount,
           currency: entry.currency,
+          toAmount: Value(entry.toAmount),
+          toCurrency: Value(entry.toCurrency),
+          recordDate: Value(entry.recordDate),
           transactionDate: entry.transactionDate,
+          status: Value(entry.status.name),
+          recurringRuleId: Value(entry.recurringRuleId),
           toAccountId: Value(entry.toAccountId),
           categoryId: Value(entry.categoryId),
           description: Value(entry.description),
@@ -495,7 +544,8 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
-  Future<void> insertTransactions(List<model.FinanceTransaction> entries) async {
+  Future<void> insertTransactions(
+      List<model.FinanceTransaction> entries) async {
     await super.transaction(() async {
       for (final entry in entries) {
         await into(transactions).insert(
@@ -505,7 +555,12 @@ class AppDatabase extends _$AppDatabase {
             accountId: entry.accountId,
             amount: entry.amount,
             currency: entry.currency,
+            toAmount: Value(entry.toAmount),
+            toCurrency: Value(entry.toCurrency),
+            recordDate: Value(entry.recordDate),
             transactionDate: entry.transactionDate,
+            status: Value(entry.status.name),
+            recurringRuleId: Value(entry.recurringRuleId),
             toAccountId: Value(entry.toAccountId),
             categoryId: Value(entry.categoryId),
             description: Value(entry.description),
@@ -519,7 +574,9 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> updateTransaction(model.FinanceTransaction entry) async {
     await super.transaction(() async {
-      final existing = await (select(transactions)..where((tbl) => tbl.id.equals(entry.id))).getSingle();
+      final existing = await (select(transactions)
+            ..where((tbl) => tbl.id.equals(entry.id)))
+          .getSingle();
       final previous = model.FinanceTransaction(
         id: existing.id,
         type: enumByName(model.TransactionType.values, existing.type),
@@ -528,19 +585,32 @@ class AppDatabase extends _$AppDatabase {
         categoryId: existing.categoryId,
         amount: existing.amount,
         currency: existing.currency,
+        toAmount: existing.toAmount,
+        toCurrency: existing.toCurrency,
+        recordDate: existing.recordDate ?? existing.transactionDate,
         transactionDate: existing.transactionDate,
+        status: existing.status == null
+            ? model.TransactionStatus.actual
+            : enumByName(model.TransactionStatus.values, existing.status!),
+        recurringRuleId: existing.recurringRuleId,
         description: existing.description,
         merchant: existing.merchant,
       );
 
       await _reverseTransactionFromBalances(previous);
-      await (update(transactions)..where((tbl) => tbl.id.equals(entry.id))).write(
+      await (update(transactions)..where((tbl) => tbl.id.equals(entry.id)))
+          .write(
         TransactionsCompanion(
           type: Value(entry.type.name),
           accountId: Value(entry.accountId),
           amount: Value(entry.amount),
           currency: Value(entry.currency),
+          toAmount: Value(entry.toAmount),
+          toCurrency: Value(entry.toCurrency),
+          recordDate: Value(entry.recordDate),
           transactionDate: Value(entry.transactionDate),
+          status: Value(entry.status.name),
+          recurringRuleId: Value(entry.recurringRuleId),
           toAccountId: Value(entry.toAccountId),
           categoryId: Value(entry.categoryId),
           description: Value(entry.description),
@@ -553,8 +623,9 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> deleteTransaction(String transactionId) async {
     await super.transaction(() async {
-      final existing =
-          await (select(transactions)..where((tbl) => tbl.id.equals(transactionId))).getSingle();
+      final existing = await (select(transactions)
+            ..where((tbl) => tbl.id.equals(transactionId)))
+          .getSingle();
       final previous = model.FinanceTransaction(
         id: existing.id,
         type: enumByName(model.TransactionType.values, existing.type),
@@ -563,13 +634,21 @@ class AppDatabase extends _$AppDatabase {
         categoryId: existing.categoryId,
         amount: existing.amount,
         currency: existing.currency,
+        toAmount: existing.toAmount,
+        toCurrency: existing.toCurrency,
+        recordDate: existing.recordDate ?? existing.transactionDate,
         transactionDate: existing.transactionDate,
+        status: existing.status == null
+            ? model.TransactionStatus.actual
+            : enumByName(model.TransactionStatus.values, existing.status!),
+        recurringRuleId: existing.recurringRuleId,
         description: existing.description,
         merchant: existing.merchant,
       );
 
       await _reverseTransactionFromBalances(previous);
-      await (delete(transactions)..where((tbl) => tbl.id.equals(transactionId))).go();
+      await (delete(transactions)..where((tbl) => tbl.id.equals(transactionId)))
+          .go();
     });
   }
 
@@ -587,7 +666,9 @@ class AppDatabase extends _$AppDatabase {
         ),
       );
 
-      await (update(accounts)..where((tbl) => tbl.id.equals(snapshot.accountId))).write(
+      await (update(accounts)
+            ..where((tbl) => tbl.id.equals(snapshot.accountId)))
+          .write(
         AccountsCompanion(
           currentBalance: Value(snapshot.marketValue),
         ),
@@ -597,7 +678,8 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> updateAssetSnapshot(model.AssetSnapshot snapshot) async {
     await super.transaction(() async {
-      await (update(assetSnapshots)..where((tbl) => tbl.id.equals(snapshot.id))).write(
+      await (update(assetSnapshots)..where((tbl) => tbl.id.equals(snapshot.id)))
+          .write(
         AssetSnapshotsCompanion(
           accountId: Value(snapshot.accountId),
           snapshotDate: Value(snapshot.snapshotDate),
@@ -614,7 +696,9 @@ class AppDatabase extends _$AppDatabase {
             ..limit(1))
           .getSingleOrNull();
       if (latest != null) {
-        await (update(accounts)..where((tbl) => tbl.id.equals(snapshot.accountId))).write(
+        await (update(accounts)
+              ..where((tbl) => tbl.id.equals(snapshot.accountId)))
+            .write(
           AccountsCompanion(
             currentBalance: Value(latest.marketValue),
           ),
@@ -625,13 +709,15 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> deleteAssetSnapshot(String snapshotId) async {
     await super.transaction(() async {
-      final existing =
-          await (select(assetSnapshots)..where((tbl) => tbl.id.equals(snapshotId))).getSingleOrNull();
+      final existing = await (select(assetSnapshots)
+            ..where((tbl) => tbl.id.equals(snapshotId)))
+          .getSingleOrNull();
       if (existing == null) {
         return;
       }
       final accountId = existing.accountId;
-      await (delete(assetSnapshots)..where((tbl) => tbl.id.equals(snapshotId))).go();
+      await (delete(assetSnapshots)..where((tbl) => tbl.id.equals(snapshotId)))
+          .go();
 
       final latest = await (select(assetSnapshots)
             ..where((tbl) => tbl.accountId.equals(accountId))
@@ -662,13 +748,19 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
-  Future<void> _applyTransactionToBalances(model.FinanceTransaction transaction) async {
+  Future<void> _applyTransactionToBalances(
+      model.FinanceTransaction transaction) async {
+    if (!transaction.affectsBalance) {
+      return;
+    }
     switch (transaction.type) {
       case model.TransactionType.income:
-        await _incrementAccountBalance(transaction.accountId, transaction.amount);
+        await _incrementAccountBalance(
+            transaction.accountId, transaction.amount);
         return;
       case model.TransactionType.adjustment:
-        await _incrementAccountBalance(transaction.accountId, transaction.amount);
+        await _incrementAccountBalance(
+            transaction.accountId, transaction.amount);
         await _syncInvestmentFlowIntoSnapshot(
           accountId: transaction.accountId,
           delta: transaction.amount,
@@ -676,20 +768,24 @@ class AppDatabase extends _$AppDatabase {
         );
         return;
       case model.TransactionType.expense:
-        await _incrementAccountBalance(transaction.accountId, -transaction.amount);
+        await _incrementAccountBalance(
+            transaction.accountId, -transaction.amount);
         return;
       case model.TransactionType.transfer:
-        await _incrementAccountBalance(transaction.accountId, -transaction.amount);
+        await _incrementAccountBalance(
+            transaction.accountId, -transaction.amount);
         await _syncInvestmentFlowIntoSnapshot(
           accountId: transaction.accountId,
           delta: -transaction.amount,
           transactionDate: transaction.transactionDate,
         );
         if (transaction.toAccountId != null) {
-          await _incrementAccountBalance(transaction.toAccountId!, transaction.amount);
+          final incomingAmount = transaction.transferInAmount;
+          await _incrementAccountBalance(
+              transaction.toAccountId!, incomingAmount);
           await _syncInvestmentFlowIntoSnapshot(
             accountId: transaction.toAccountId!,
-            delta: transaction.amount,
+            delta: incomingAmount,
             transactionDate: transaction.transactionDate,
           );
         }
@@ -697,13 +793,19 @@ class AppDatabase extends _$AppDatabase {
     }
   }
 
-  Future<void> _reverseTransactionFromBalances(model.FinanceTransaction transaction) async {
+  Future<void> _reverseTransactionFromBalances(
+      model.FinanceTransaction transaction) async {
+    if (!transaction.affectsBalance) {
+      return;
+    }
     switch (transaction.type) {
       case model.TransactionType.income:
-        await _incrementAccountBalance(transaction.accountId, -transaction.amount);
+        await _incrementAccountBalance(
+            transaction.accountId, -transaction.amount);
         return;
       case model.TransactionType.adjustment:
-        await _incrementAccountBalance(transaction.accountId, -transaction.amount);
+        await _incrementAccountBalance(
+            transaction.accountId, -transaction.amount);
         await _syncInvestmentFlowIntoSnapshot(
           accountId: transaction.accountId,
           delta: -transaction.amount,
@@ -711,20 +813,24 @@ class AppDatabase extends _$AppDatabase {
         );
         return;
       case model.TransactionType.expense:
-        await _incrementAccountBalance(transaction.accountId, transaction.amount);
+        await _incrementAccountBalance(
+            transaction.accountId, transaction.amount);
         return;
       case model.TransactionType.transfer:
-        await _incrementAccountBalance(transaction.accountId, transaction.amount);
+        await _incrementAccountBalance(
+            transaction.accountId, transaction.amount);
         await _syncInvestmentFlowIntoSnapshot(
           accountId: transaction.accountId,
           delta: transaction.amount,
           transactionDate: transaction.transactionDate,
         );
         if (transaction.toAccountId != null) {
-          await _incrementAccountBalance(transaction.toAccountId!, -transaction.amount);
+          final incomingAmount = transaction.transferInAmount;
+          await _incrementAccountBalance(
+              transaction.toAccountId!, -incomingAmount);
           await _syncInvestmentFlowIntoSnapshot(
             accountId: transaction.toAccountId!,
-            delta: -transaction.amount,
+            delta: -incomingAmount,
             transactionDate: transaction.transactionDate,
           );
         }
@@ -733,7 +839,9 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> _incrementAccountBalance(String accountId, double delta) async {
-    final row = await (select(accounts)..where((tbl) => tbl.id.equals(accountId))).getSingle();
+    final row = await (select(accounts)
+          ..where((tbl) => tbl.id.equals(accountId)))
+        .getSingle();
     await (update(accounts)..where((tbl) => tbl.id.equals(accountId))).write(
       AccountsCompanion(
         currentBalance: Value(row.currentBalance + delta),
@@ -749,8 +857,11 @@ class AppDatabase extends _$AppDatabase {
     if (delta == 0) {
       return;
     }
-    final account = await (select(accounts)..where((tbl) => tbl.id.equals(accountId))).getSingle();
-    final reportGroup = enumByName(model.ReportGroup.values, account.reportGroup);
+    final account = await (select(accounts)
+          ..where((tbl) => tbl.id.equals(accountId)))
+        .getSingle();
+    final reportGroup =
+        enumByName(model.ReportGroup.values, account.reportGroup);
     if (reportGroup != model.ReportGroup.investment &&
         reportGroup != model.ReportGroup.retirement) {
       return;
@@ -770,7 +881,8 @@ class AppDatabase extends _$AppDatabase {
     if (latest == null) {
       final seededCost = delta.clamp(0, double.infinity).toDouble();
       final seededMarketValue = account.currentBalance;
-      final seededCashBalance = account.currentBalance.clamp(0, double.infinity).toDouble();
+      final seededCashBalance =
+          account.currentBalance.clamp(0, double.infinity).toDouble();
       await into(assetSnapshots).insert(
         AssetSnapshotsCompanion.insert(
           id: 'snap_${DateTime.now().microsecondsSinceEpoch}',
@@ -786,13 +898,16 @@ class AppDatabase extends _$AppDatabase {
     }
 
     final nextMarketValue = latest.marketValue + delta;
-    final nextCashBalance = (latest.cashBalance + delta).clamp(0, double.infinity).toDouble();
+    final nextCashBalance =
+        (latest.cashBalance + delta).clamp(0, double.infinity).toDouble();
     final shouldAdjustBaselineCost =
         first != null && !transactionDate.isAfter(first.snapshotDate);
-    final nextLatestCostBasis = shouldAdjustBaselineCost && first.id == latest.id
-        ? (latest.costBasis + delta).clamp(0, double.infinity).toDouble()
-        : latest.costBasis;
-    await (update(assetSnapshots)..where((tbl) => tbl.id.equals(latest.id))).write(
+    final nextLatestCostBasis =
+        shouldAdjustBaselineCost && first.id == latest.id
+            ? (latest.costBasis + delta).clamp(0, double.infinity).toDouble()
+            : latest.costBasis;
+    await (update(assetSnapshots)..where((tbl) => tbl.id.equals(latest.id)))
+        .write(
       AssetSnapshotsCompanion(
         marketValue: Value(nextMarketValue),
         costBasis: Value(nextLatestCostBasis),
@@ -802,8 +917,10 @@ class AppDatabase extends _$AppDatabase {
     );
 
     if (shouldAdjustBaselineCost && first.id != latest.id) {
-      final nextFirstCostBasis = (first.costBasis + delta).clamp(0, double.infinity).toDouble();
-      await (update(assetSnapshots)..where((tbl) => tbl.id.equals(first.id))).write(
+      final nextFirstCostBasis =
+          (first.costBasis + delta).clamp(0, double.infinity).toDouble();
+      await (update(assetSnapshots)..where((tbl) => tbl.id.equals(first.id)))
+          .write(
         AssetSnapshotsCompanion(
           costBasis: Value(nextFirstCostBasis),
           unrealizedPnl: Value(first.marketValue - nextFirstCostBasis),

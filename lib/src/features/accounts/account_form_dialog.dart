@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models/account.dart';
+import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/id_generator.dart';
 import '../shared/finance_form_fields.dart';
 
@@ -20,13 +21,13 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
   final formKey = GlobalKey<FormState>();
   late final TextEditingController nameController;
   late final TextEditingController institutionController;
-  late final TextEditingController currencyController;
   late final TextEditingController initialBalanceController;
   late final TextEditingController currentBalanceController;
   late final TextEditingController noteController;
 
   late AccountType accountType;
   late ReportGroup reportGroup;
+  late String currency;
 
   bool get isEdit => widget.initialAccount != null;
 
@@ -35,13 +36,15 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
     super.initState();
     final account = widget.initialAccount;
     nameController = TextEditingController(text: account?.name ?? '');
-    institutionController = TextEditingController(text: account?.institution ?? '');
-    currencyController = TextEditingController(text: account?.currency ?? 'MYR');
+    institutionController =
+        TextEditingController(text: account?.institution ?? '');
+    currency = normalizeCurrency(account?.currency ?? 'MYR');
     initialBalanceController = TextEditingController(
       text: (account?.initialBalance ?? 0).toStringAsFixed(2),
     );
     currentBalanceController = TextEditingController(
-      text: (account?.currentBalance ?? account?.initialBalance ?? 0).toStringAsFixed(2),
+      text: (account?.currentBalance ?? account?.initialBalance ?? 0)
+          .toStringAsFixed(2),
     );
     noteController = TextEditingController(text: account?.note ?? '');
     accountType = account?.accountType ?? AccountType.cash;
@@ -52,7 +55,6 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
   void dispose() {
     nameController.dispose();
     institutionController.dispose();
-    currencyController.dispose();
     initialBalanceController.dispose();
     currentBalanceController.dispose();
     noteController.dispose();
@@ -84,7 +86,8 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     border: OutlineInputBorder(),
                   ),
                   items: AccountType.values
-                      .map((type) => DropdownMenuItem(value: type, child: Text(_accountTypeLabel(type))))
+                      .map((type) => DropdownMenuItem(
+                          value: type, child: Text(_accountTypeLabel(type))))
                       .toList(),
                   onChanged: (value) => setState(() {
                     accountType = value!;
@@ -99,28 +102,47 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     border: OutlineInputBorder(),
                   ),
                   items: ReportGroup.values
-                      .map((group) => DropdownMenuItem(value: group, child: Text(_groupLabel(group))))
+                      .map((group) => DropdownMenuItem(
+                          value: group, child: Text(_groupLabel(group))))
                       .toList(),
                   onChanged: (value) => setState(() => reportGroup = value!),
                 ),
                 const SizedBox(height: 12),
-                FinanceTextField(
-                  controller: currencyController,
-                  label: '货币',
-                  validator: _required,
+                DropdownButtonFormField<String>(
+                  initialValue: currency,
+                  decoration: const InputDecoration(
+                    labelText: '货币',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: supportedCurrencies
+                      .map(
+                        (item) => DropdownMenuItem(
+                          value: item,
+                          child: Text(currencyOptionLabel(item)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    setState(() => currency = value);
+                  },
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: initialBalanceController,
                   label: '初始余额',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: currentBalanceController,
                   label: '当前余额',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
                 ),
                 const SizedBox(height: 12),
@@ -165,7 +187,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
         name: nameController.text.trim(),
         accountType: accountType,
         reportGroup: reportGroup,
-        currency: currencyController.text.trim().toUpperCase(),
+        currency: currency,
         initialBalance: balance,
         currentBalance: currentBalance,
         institution: _nullIfEmpty(institutionController.text),
@@ -175,10 +197,13 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
     );
   }
 
-  String? _required(String? value) => (value == null || value.trim().isEmpty) ? '必填' : null;
-  String? _numberRequired(String? value) => double.tryParse(value ?? '') == null ? '请输入数字' : null;
+  String? _required(String? value) =>
+      (value == null || value.trim().isEmpty) ? '必填' : null;
+  String? _numberRequired(String? value) =>
+      double.tryParse(value ?? '') == null ? '请输入数字' : null;
 
-  String? _nullIfEmpty(String value) => value.trim().isEmpty ? null : value.trim();
+  String? _nullIfEmpty(String value) =>
+      value.trim().isEmpty ? null : value.trim();
 
   String _groupLabel(ReportGroup group) {
     switch (group) {

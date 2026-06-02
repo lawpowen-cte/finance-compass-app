@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/models/budget.dart';
 import '../../core/models/category.dart';
+import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/id_generator.dart';
 import '../../core/utils/month_key.dart';
 import '../shared/finance_form_fields.dart';
@@ -25,10 +26,13 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
   final formKey = GlobalKey<FormState>();
   final amountController = TextEditingController();
   final thresholdController = TextEditingController(text: '0.8');
-  final monthController = TextEditingController(text: monthKeyFromDate(DateTime.now()));
+  final monthController = TextEditingController(
+    text: monthKeyFromDate(DateTime.now()),
+  );
 
   late List<Category> categories;
   String? categoryId;
+  String currency = activeBaseCurrencyCode;
   bool rolloverEnabled = false;
 
   @override
@@ -39,11 +43,13 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
     if (initialBudget != null) {
       categoryId = initialBudget.categoryId;
       amountController.text = initialBudget.amount.toString();
+      currency = normalizeCurrency(initialBudget.currency);
       thresholdController.text = initialBudget.alertThreshold.toString();
       monthController.text = initialBudget.monthKey;
       rolloverEnabled = initialBudget.rolloverEnabled;
     } else if (categories.isNotEmpty) {
       categoryId = categories.first.id;
+      currency = widget.repository.baseCurrency;
     }
   }
 
@@ -74,10 +80,12 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                     border: OutlineInputBorder(),
                   ),
                   items: categories
-                      .map((category) => DropdownMenuItem(
-                            value: category.id,
-                            child: Text(category.name),
-                          ))
+                      .map(
+                        (category) => DropdownMenuItem(
+                          value: category.id,
+                          child: Text(category.name),
+                        ),
+                      )
                       .toList(),
                   onChanged: (value) => setState(() => categoryId = value),
                 ),
@@ -85,22 +93,46 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                 FinanceTextField(
                   controller: monthController,
                   label: '生效月份',
-                  validator: (value) => RegExp(r'^\d{4}-\d{2}$').hasMatch(value ?? '')
-                      ? null
-                      : '格式 YYYY-MM',
+                  validator: (value) =>
+                      RegExp(r'^\d{4}-\d{2}$').hasMatch(value ?? '')
+                          ? null
+                          : '格式 YYYY-MM',
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: amountController,
                   label: '预算金额',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: currency,
+                  decoration: const InputDecoration(
+                    labelText: '预算币种',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: supportedCurrencies
+                      .map(
+                        (item) => DropdownMenuItem(
+                          value: item,
+                          child: Text(currencyOptionLabel(item)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() => currency = value);
+                    }
+                  },
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: thresholdController,
                   label: '提醒阈值',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
                 ),
                 const SizedBox(height: 12),
@@ -108,7 +140,7 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                   value: rolloverEnabled,
                   contentPadding: EdgeInsets.zero,
                   title: const Text('启用结转'),
-                  subtitle: const Text('这个月没用完的预算，会滚到下个月继续用'),
+                  subtitle: const Text('没用完会滚到下个月，超支也会扣下个月额度。'),
                   onChanged: (value) => setState(() => rolloverEnabled = value),
                 ),
               ],
@@ -117,7 +149,10 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
         FilledButton(onPressed: _submit, child: const Text('保存')),
       ],
     );
@@ -134,11 +169,13 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
         categoryId: categoryId!,
         monthKey: monthController.text.trim(),
         amount: double.parse(amountController.text.trim()),
+        currency: currency,
         alertThreshold: double.parse(thresholdController.text.trim()),
         rolloverEnabled: rolloverEnabled,
       ),
     );
   }
 
-  String? _numberRequired(String? value) => double.tryParse(value ?? '') == null ? '请输入数字' : null;
+  String? _numberRequired(String? value) =>
+      double.tryParse(value ?? '') == null ? '请输入数字' : null;
 }

@@ -4,6 +4,7 @@ import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/category.dart';
 import '../../core/models/transaction.dart';
+import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/id_generator.dart';
 import '../shared/finance_form_fields.dart';
 
@@ -12,10 +13,12 @@ class TransactionFormDialog extends StatefulWidget {
     super.key,
     required this.repository,
     this.initialTransaction,
+    this.draftTransaction,
   });
 
   final FinanceRepository repository;
   final FinanceTransaction? initialTransaction;
+  final FinanceTransaction? draftTransaction;
 
   @override
   State<TransactionFormDialog> createState() => _TransactionFormDialogState();
@@ -24,16 +27,22 @@ class TransactionFormDialog extends StatefulWidget {
 class _TransactionFormDialogState extends State<TransactionFormDialog> {
   final formKey = GlobalKey<FormState>();
   final amountController = TextEditingController();
-  final currencyController = TextEditingController(text: 'MYR');
+  final toAmountController = TextEditingController();
   final descriptionController = TextEditingController();
   final merchantController = TextEditingController();
 
   TransactionType transactionType = TransactionType.expense;
-  DateTime transactionDate = DateTime.now();
+  TransactionStatus transactionStatus = TransactionStatus.actual;
+  String currency = 'MYR';
+  String toCurrency = 'MYR';
+  DateTime recordDate = DateTime.now();
+  DateTime? settlementDate;
   String? accountId;
   String? toAccountId;
   String? categoryId;
   int recurrenceMonths = 1;
+  bool _isAutoSettingToAmount = false;
+  bool _toAmountEditedByUser = false;
 
   bool get _isEditing => widget.initialTransaction != null;
 
@@ -41,31 +50,54 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
   void initState() {
     super.initState();
     final initialTransaction = widget.initialTransaction;
-    if (initialTransaction != null) {
-      transactionType = initialTransaction.type;
-      transactionDate = initialTransaction.transactionDate;
-      accountId = initialTransaction.accountId;
-      toAccountId = initialTransaction.toAccountId;
-      categoryId = initialTransaction.categoryId;
-      amountController.text = initialTransaction.amount.toString();
-      currencyController.text = initialTransaction.currency;
-      descriptionController.text = initialTransaction.description ?? '';
-      merchantController.text = initialTransaction.merchant ?? '';
+    final draftTransaction = widget.draftTransaction;
+    final seedTransaction = initialTransaction ?? draftTransaction;
+    if (seedTransaction != null) {
+      transactionType = seedTransaction.type;
+      transactionStatus = seedTransaction.status == TransactionStatus.settled
+          ? TransactionStatus.actual
+          : seedTransaction.status;
+      recordDate = initialTransaction == null
+          ? DateTime.now()
+          : seedTransaction.recordDate;
+      settlementDate =
+          initialTransaction == null ? null : seedTransaction.transactionDate;
+      accountId = seedTransaction.accountId;
+      toAccountId = seedTransaction.toAccountId;
+      categoryId = seedTransaction.categoryId;
+      amountController.text = seedTransaction.amount.toString();
+      currency = normalizeCurrency(seedTransaction.currency);
+      toAmountController.text = seedTransaction.toAmount?.toString() ?? '';
+      toCurrency = normalizeCurrency(
+        seedTransaction.toCurrency ?? seedTransaction.transferInCurrency,
+      );
+      _toAmountEditedByUser = seedTransaction.toAmount != null;
+      descriptionController.text = seedTransaction.description ?? '';
+      merchantController.text = seedTransaction.merchant ?? '';
       _syncCategoryDefault();
-      return;
     }
 
     final accountOptions = _sortedAccounts();
-    if (accountOptions.isNotEmpty) {
+    if (accountOptions.isNotEmpty && accountId == null) {
       accountId = _preferredAccountId(accountOptions);
+      currency = _currencyForAccount(accountId!) ?? currency;
+    }
+    if (accountId != null) {
+      currency = _currencyForAccount(accountId!) ?? currency;
+    }
+    if (toAccountId != null) {
+      toCurrency = _currencyForAccount(toAccountId!) ?? toCurrency;
     }
     _syncCategoryDefault();
+    amountController.addListener(_updateTransferEstimateIfAllowed);
+    toAmountController.addListener(_markToAmountEdited);
+    _updateTransferEstimate(force: toAmountController.text.trim().isEmpty);
   }
 
   @override
   void dispose() {
     amountController.dispose();
-    currencyController.dispose();
+    toAmountController.dispose();
     descriptionController.dispose();
     merchantController.dispose();
     super.dispose();
@@ -93,7 +125,8 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                     border: OutlineInputBorder(),
                   ),
                   items: TransactionType.values
-                      .map((type) => DropdownMenuItem(value: type, child: Text(_typeLabel(type))))
+                      .map((type) => DropdownMenuItem(
+                          value: type, child: Text(_typeLabel(type))))
                       .toList(),
                   onChanged: (value) {
                     if (value == null) {
@@ -102,9 +135,42 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                     setState(() {
                       transactionType = value;
                       toAccountId = null;
+                      _toAmountEditedByUser = false;
                       _syncCategoryDefault();
                     });
+                    _updateTransferEstimate(force: true);
                   },
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<TransactionStatus>(
+                  initialValue: transactionStatus,
+                  decoration: const InputDecoration(
+                    labelText: '状态',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    TransactionStatus.planned,
+                    TransactionStatus.actual,
+                  ]
+                      .map((status) => DropdownMenuItem(
+                            value: status,
+                            child: Text(_statusLabel(status)),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    setState(() => transactionStatus = value);
+                  },
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '预计不会影响账户真实余额；已发生会计入账户。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 ),
                 if (transactionType == TransactionType.adjustment) ...[
                   const SizedBox(height: 8),
@@ -131,7 +197,14 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                         ),
                       )
                       .toList(),
-                  onChanged: (value) => setState(() => accountId = value),
+                  onChanged: (value) => setState(() {
+                    accountId = value;
+                    if (value != null) {
+                      currency = _currencyForAccount(value) ?? currency;
+                    }
+                    _toAmountEditedByUser = false;
+                    _updateTransferEstimate(force: true);
+                  }),
                 ),
                 if (transactionType == TransactionType.transfer) ...[
                   const SizedBox(height: 12),
@@ -146,11 +219,19 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                         .map(
                           (account) => DropdownMenuItem(
                             value: account.id,
-                            child: Text('${account.name} (${account.currency})'),
+                            child:
+                                Text('${account.name} (${account.currency})'),
                           ),
                         )
                         .toList(),
-                    onChanged: (value) => setState(() => toAccountId = value),
+                    onChanged: (value) => setState(() {
+                      toAccountId = value;
+                      if (value != null) {
+                        toCurrency = _currencyForAccount(value) ?? toCurrency;
+                      }
+                      _toAmountEditedByUser = false;
+                      _updateTransferEstimate(force: true);
+                    }),
                   ),
                 ],
                 if (categoryOptions.isNotEmpty) ...[
@@ -165,7 +246,8 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                         .map(
                           (category) => DropdownMenuItem(
                             value: category.id,
-                            child: Text('${category.name} (${_categoryTypeLabel(category.type)})'),
+                            child: Text(
+                                '${category.name} (${_categoryTypeLabel(category.type)})'),
                           ),
                         )
                         .toList(),
@@ -176,26 +258,55 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                 FinanceTextField(
                   controller: amountController,
                   label: '金额',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
                 ),
                 const SizedBox(height: 12),
-                FinanceTextField(
-                  controller: currencyController,
+                _CurrencyDisplayField(
                   label: '货币',
-                  validator: _required,
+                  currency: currency,
+                  helperText: '跟随转出账户',
                 ),
+                if (transactionType == TransactionType.transfer) ...[
+                  const SizedBox(height: 12),
+                  FinanceTextField(
+                    controller: toAmountController,
+                    label: '转入金额',
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    validator: _numberRequired,
+                  ),
+                  const SizedBox(height: 12),
+                  _CurrencyDisplayField(
+                    label: '转入币种',
+                    currency: toCurrency,
+                    helperText: '跟随转入账户',
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _transferPreviewText(),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('交易日期'),
-                  subtitle: Text(
-                    '${transactionDate.year}-${transactionDate.month.toString().padLeft(2, '0')}-${transactionDate.day.toString().padLeft(2, '0')}',
-                  ),
-                  trailing: TextButton(
-                    onPressed: _pickDate,
-                    child: const Text('修改'),
-                  ),
+                _DateTile(
+                  title: '记录日期',
+                  value: recordDate,
+                  onPick: () => _pickRecordDate(),
+                ),
+                const SizedBox(height: 8),
+                _DateTile(
+                  title: '结算日期',
+                  value: settlementDate,
+                  emptyLabel: '未填写时使用记录日期',
+                  onPick: () => _pickSettlementDate(),
+                  onClear: settlementDate == null
+                      ? null
+                      : () => setState(() => settlementDate = null),
                 ),
                 if (!_isEditing) ...[
                   const SizedBox(height: 12),
@@ -229,7 +340,8 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                   ),
                 ],
                 const SizedBox(height: 12),
-                FinanceTextField(controller: descriptionController, label: '说明'),
+                FinanceTextField(
+                    controller: descriptionController, label: '说明'),
                 const SizedBox(height: 12),
                 FinanceTextField(controller: merchantController, label: '商户'),
               ],
@@ -238,7 +350,9 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消')),
         FilledButton(onPressed: _submit, child: const Text('保存')),
       ],
     );
@@ -252,8 +366,10 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
 
   List<Category> _categoryOptions() {
     final categories = switch (transactionType) {
-      TransactionType.income => widget.repository.categoriesByType(CategoryType.income),
-      TransactionType.expense => widget.repository.categoriesByType(CategoryType.expense),
+      TransactionType.income =>
+        widget.repository.categoriesByType(CategoryType.income),
+      TransactionType.expense =>
+        widget.repository.categoriesByType(CategoryType.expense),
       TransactionType.transfer => [
           ...widget.repository.categoriesByType(CategoryType.transfer),
           ...widget.repository.categoriesByType(CategoryType.investment),
@@ -264,7 +380,8 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
         ],
     };
 
-    categories.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    categories
+        .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return categories;
   }
 
@@ -275,7 +392,8 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     }
 
     accounts.sort((left, right) {
-      final countCompare = (counts[right.id] ?? 0).compareTo(counts[left.id] ?? 0);
+      final countCompare =
+          (counts[right.id] ?? 0).compareTo(counts[left.id] ?? 0);
       if (countCompare != 0) {
         return countCompare;
       }
@@ -283,6 +401,57 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     });
 
     return accounts.first.id;
+  }
+
+  String? _currencyForAccount(String accountId) {
+    for (final account in widget.repository.accounts) {
+      if (account.id == accountId) {
+        return normalizeCurrency(account.currency);
+      }
+    }
+    return null;
+  }
+
+  void _markToAmountEdited() {
+    if (_isAutoSettingToAmount) {
+      return;
+    }
+    _toAmountEditedByUser = true;
+  }
+
+  void _updateTransferEstimateIfAllowed() {
+    _updateTransferEstimate();
+  }
+
+  void _updateTransferEstimate({bool force = false}) {
+    if (transactionType != TransactionType.transfer) {
+      return;
+    }
+    if (!force && _toAmountEditedByUser) {
+      return;
+    }
+    final amount = double.tryParse(amountController.text.trim());
+    if (amount == null) {
+      return;
+    }
+    final estimate = widget.repository.convertAmount(
+      amount: amount,
+      fromCurrency: currency,
+      toCurrency: toCurrency,
+    );
+    _isAutoSettingToAmount = true;
+    toAmountController.text = estimate.toStringAsFixed(2);
+    _isAutoSettingToAmount = false;
+  }
+
+  String _transferPreviewText() {
+    final amount = double.tryParse(amountController.text.trim());
+    final toAmount = double.tryParse(toAmountController.text.trim());
+    if (amount == null || toAmount == null) {
+      return '转账会按转出账户扣款，并按转入金额写入目标账户。';
+    }
+    return '${formatMoney(amount, currency: currency)} → '
+        '${formatMoney(toAmount, currency: toCurrency)}';
   }
 
   String? _preferredCategoryId(List<Category> categories) {
@@ -297,14 +466,16 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
         continue;
       }
       final transactionCategoryId = transaction.categoryId;
-      if (transactionCategoryId == null || !allowedCategoryIds.contains(transactionCategoryId)) {
+      if (transactionCategoryId == null ||
+          !allowedCategoryIds.contains(transactionCategoryId)) {
         continue;
       }
       counts[transactionCategoryId] = (counts[transactionCategoryId] ?? 0) + 1;
     }
 
     categories.sort((left, right) {
-      final countCompare = (counts[right.id] ?? 0).compareTo(counts[left.id] ?? 0);
+      final countCompare =
+          (counts[right.id] ?? 0).compareTo(counts[left.id] ?? 0);
       if (countCompare != 0) {
         return countCompare;
       }
@@ -326,15 +497,27 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     categoryId = _preferredCategoryId(categories);
   }
 
-  Future<void> _pickDate() async {
+  Future<void> _pickRecordDate() async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: transactionDate,
+      initialDate: recordDate,
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
     if (picked != null) {
-      setState(() => transactionDate = picked);
+      setState(() => recordDate = picked);
+    }
+  }
+
+  Future<void> _pickSettlementDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: settlementDate ?? recordDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null) {
+      setState(() => settlementDate = picked);
     }
   }
 
@@ -347,9 +530,15 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     }
 
     final amount = double.parse(amountController.text.trim());
-    final currency = currencyController.text.trim().toUpperCase();
+    final transferInAmount = transactionType == TransactionType.transfer
+        ? double.parse(toAmountController.text.trim())
+        : null;
+    final transferInCurrency = transactionType == TransactionType.transfer
+        ? normalizeCurrency(toCurrency)
+        : null;
     final description = _nullIfEmpty(descriptionController.text);
     final merchant = _nullIfEmpty(merchantController.text);
+    final effectiveSettlementDate = settlementDate ?? recordDate;
 
     if (_isEditing) {
       Navigator.of(context).pop(
@@ -363,7 +552,12 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
               categoryId: categoryId,
               amount: amount,
               currency: currency,
-              transactionDate: transactionDate,
+              toAmount: transferInAmount,
+              toCurrency: transferInCurrency,
+              recordDate: recordDate,
+              transactionDate: effectiveSettlementDate,
+              status: transactionStatus,
+              recurringRuleId: widget.initialTransaction!.recurringRuleId,
               description: description,
               merchant: merchant,
             ),
@@ -383,13 +577,18 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
         categoryId: categoryId,
         amount: amount,
         currency: currency,
-        transactionDate: transactionDate,
+        toAmount: transferInAmount,
+        toCurrency: transferInCurrency,
+        recordDate: recordDate,
+        transactionDate: effectiveSettlementDate,
+        status: transactionStatus,
         description: description,
         merchant: merchant,
       ),
     );
 
-    Navigator.of(context).pop(TransactionFormResult(transactions: transactions));
+    Navigator.of(context)
+        .pop(TransactionFormResult(transactions: transactions));
   }
 
   String _typeLabel(TransactionType type) {
@@ -418,12 +617,90 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     }
   }
 
-  String? _required(String? value) => (value == null || value.trim().isEmpty) ? '必填' : null;
+  String _statusLabel(TransactionStatus status) {
+    switch (status) {
+      case TransactionStatus.planned:
+        return '预计';
+      case TransactionStatus.actual:
+        return '已发生';
+      case TransactionStatus.settled:
+        return '已发生';
+    }
+  }
 
   String? _numberRequired(String? value) =>
       double.tryParse(value ?? '') == null ? '请输入数字' : null;
 
-  String? _nullIfEmpty(String value) => value.trim().isEmpty ? null : value.trim();
+  String? _nullIfEmpty(String value) =>
+      value.trim().isEmpty ? null : value.trim();
+}
+
+class _DateTile extends StatelessWidget {
+  const _DateTile({
+    required this.title,
+    required this.value,
+    required this.onPick,
+    this.emptyLabel,
+    this.onClear,
+  });
+
+  final String title;
+  final DateTime? value;
+  final String? emptyLabel;
+  final VoidCallback onPick;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: Text(title),
+      subtitle: Text(value == null ? emptyLabel ?? '未填写' : _formatDate(value!)),
+      trailing: Wrap(
+        spacing: 4,
+        children: [
+          if (onClear != null)
+            IconButton(
+              onPressed: onClear,
+              icon: const Icon(Icons.clear),
+              tooltip: '清空',
+            ),
+          TextButton(
+            onPressed: onPick,
+            child: const Text('修改'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _formatDate(DateTime date) {
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  }
+}
+
+class _CurrencyDisplayField extends StatelessWidget {
+  const _CurrencyDisplayField({
+    required this.label,
+    required this.currency,
+    required this.helperText,
+  });
+
+  final String label;
+  final String currency;
+  final String helperText;
+
+  @override
+  Widget build(BuildContext context) {
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: label,
+        helperText: helperText,
+        border: const OutlineInputBorder(),
+      ),
+      child: Text(currencyOptionLabel(currency)),
+    );
+  }
 }
 
 class TransactionFormResult {
@@ -442,10 +719,15 @@ List<FinanceTransaction> buildRecurringTransactions({
   final idPrefix = baseTransaction.id;
 
   return List.generate(safeMonths, (index) {
-    final date = DateTime(
+    final settlementDate = DateTime(
       baseTransaction.transactionDate.year,
       baseTransaction.transactionDate.month + index,
       baseTransaction.transactionDate.day,
+    );
+    final recordDate = DateTime(
+      baseTransaction.recordDate.year,
+      baseTransaction.recordDate.month + index,
+      baseTransaction.recordDate.day,
     );
     return FinanceTransaction(
       id: '$idPrefix-${index + 1}',
@@ -455,7 +737,12 @@ List<FinanceTransaction> buildRecurringTransactions({
       categoryId: baseTransaction.categoryId,
       amount: baseTransaction.amount,
       currency: baseTransaction.currency,
-      transactionDate: date,
+      toAmount: baseTransaction.toAmount,
+      toCurrency: baseTransaction.toCurrency,
+      recordDate: recordDate,
+      transactionDate: settlementDate,
+      status: index == 0 ? baseTransaction.status : TransactionStatus.planned,
+      recurringRuleId: baseTransaction.recurringRuleId,
       description: baseTransaction.description,
       merchant: baseTransaction.merchant,
     );

@@ -25,6 +25,7 @@ class BudgetsScreen extends StatefulWidget {
 
 class _BudgetsScreenState extends State<BudgetsScreen> {
   late String _selectedMonth;
+  final _expandedBudgetIds = <String>{};
 
   @override
   void initState() {
@@ -43,7 +44,9 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
 
     final totalBudget = repository.totalEffectiveBudgetForMonth(_selectedMonth);
     final totalSpent = repository.totalBudgetExpenseForMonth(_selectedMonth);
-    final totalBalance = totalBudget - totalSpent;
+    final totalPlanned =
+        repository.totalPlannedBudgetExpenseForMonth(_selectedMonth);
+    final totalBalance = totalBudget - totalSpent - totalPlanned;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -76,40 +79,28 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                       .map(
                         (monthKey) => DropdownMenuItem(
                           value: monthKey,
-                          child: Text(_monthLabel(monthKey)),
+                          child: Text(monthKey),
                         ),
                       )
                       .toList(),
                   onChanged: (value) {
-                    if (value == null) {
-                      return;
+                    if (value != null) {
+                      setState(() => _selectedMonth = value);
                     }
-                    setState(() => _selectedMonth = value);
                   },
                 ),
                 const SizedBox(height: 16),
-                Row(
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
                   children: [
-                    Expanded(
-                      child: _SummaryMetric(
-                        label: '总预算',
-                        value: formatMoney(totalBudget),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _SummaryMetric(
-                        label: '已使用',
-                        value: formatMoney(totalSpent),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _SummaryMetric(
-                        label: '余额',
-                        value: formatMoney(totalBalance),
-                      ),
-                    ),
+                    _SummaryMetric(
+                        label: '总预算', value: formatMoney(totalBudget)),
+                    _SummaryMetric(label: '实际', value: formatMoney(totalSpent)),
+                    _SummaryMetric(
+                        label: '预计', value: formatMoney(totalPlanned)),
+                    _SummaryMetric(
+                        label: '预算池余额', value: formatMoney(totalBalance)),
                   ],
                 ),
               ],
@@ -128,6 +119,14 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
             budget: budget,
             repository: repository,
             selectedMonth: _selectedMonth,
+            isExpanded: _expandedBudgetIds.contains(budget.id),
+            onToggleExpanded: () {
+              setState(() {
+                if (!_expandedBudgetIds.remove(budget.id)) {
+                  _expandedBudgetIds.add(budget.id);
+                }
+              });
+            },
             onEdit: () => _showEditBudget(context, budget),
             onDelete: () => widget.onDeleteBudget(budget.id),
           ),
@@ -142,16 +141,6 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       7,
       (index) => monthKeyFromDate(DateTime(now.year, now.month + index)),
     );
-  }
-
-  String _monthLabel(String monthKey) {
-    final parts = monthKey.split('-');
-    if (parts.length != 2) {
-      return monthKey;
-    }
-    final year = int.tryParse(parts[0]) ?? 0;
-    final month = int.tryParse(parts[1]) ?? 1;
-    return '$year-${month.toString().padLeft(2, '0')}';
   }
 
   Future<void> _showAddBudget(BuildContext context) async {
@@ -183,6 +172,8 @@ class _BudgetTile extends StatelessWidget {
     required this.budget,
     required this.repository,
     required this.selectedMonth,
+    required this.isExpanded,
+    required this.onToggleExpanded,
     required this.onEdit,
     required this.onDelete,
   });
@@ -190,105 +181,213 @@ class _BudgetTile extends StatelessWidget {
   final Budget budget;
   final FinanceRepository repository;
   final String selectedMonth;
+  final bool isExpanded;
+  final VoidCallback onToggleExpanded;
   final Future<void> Function() onEdit;
   final Future<void> Function() onDelete;
 
   @override
   Widget build(BuildContext context) {
-    final monthlyBudget = budget.amount;
-    final effectiveBudget = repository.effectiveBudgetForMonth(budget, selectedMonth);
-    final spent = repository.expenseTotalForCategory(budget.categoryId, selectedMonth);
-    final monthlyBalance = effectiveBudget - spent;
-    final usage = effectiveBudget <= 0 ? 0.0 : (spent / effectiveBudget).clamp(0.0, 1.0);
-    final percent = (usage * 100).round();
-    final rolloverMark = budget.rolloverEnabled ? '↺' : '';
-
+    final monthlyBudget = repository.budgetAmountInBase(budget);
+    final effectiveBudget =
+        repository.effectiveBudgetForMonth(budget, selectedMonth);
+    final spent =
+        repository.expenseTotalForCategory(budget.categoryId, selectedMonth);
+    final planned = repository.plannedExpenseTotalForCategory(
+        budget.categoryId, selectedMonth);
+    final monthlyBalance = effectiveBudget - spent - planned;
+    final displayCurrency = budget.currency;
+    final displayMonthlyBudget =
+        repository.convertFromBase(monthlyBudget, displayCurrency);
+    final displayEffectiveBudget =
+        repository.convertFromBase(effectiveBudget, displayCurrency);
+    final displaySpent = repository.convertFromBase(spent, displayCurrency);
+    final displayPlanned = repository.convertFromBase(planned, displayCurrency);
+    final displayMonthlyBalance =
+        repository.convertFromBase(monthlyBalance, displayCurrency);
+    final yearKey = selectedMonth.split('-').first;
+    final annualBudget = monthlyBudget * 12;
+    final annualSpent = List.generate(
+      12,
+      (index) => '$yearKey-${(index + 1).toString().padLeft(2, '0')}',
+    ).fold<double>(
+      0,
+      (sum, monthKey) =>
+          sum + repository.expenseTotalForCategory(budget.categoryId, monthKey),
+    );
+    final displayAnnualBudget =
+        repository.convertFromBase(annualBudget, displayCurrency);
+    final displayAnnualSpent =
+        repository.convertFromBase(annualSpent, displayCurrency);
+    final usage =
+        effectiveBudget <= 0 ? 0.0 : (spent / effectiveBudget).clamp(0.0, 1.0);
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          repository.categoryName(budget.categoryId),
-                          style: Theme.of(context).textTheme.titleMedium,
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: onToggleExpanded,
+              child: Row(
+                children: [
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            repository.categoryName(budget.categoryId),
+                            style: Theme.of(context).textTheme.titleSmall,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
-                      if (rolloverMark.isNotEmpty) ...[
-                        const SizedBox(width: 8),
-                        Text(
-                          rolloverMark,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
+                        if (budget.rolloverEnabled) ...[
+                          const SizedBox(width: 4),
+                          Text(
+                            '↻',
+                            style: Theme.of(context).textTheme.labelMedium,
+                          ),
+                        ],
                       ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _InlineBudgetSummary(
+                    balance: formatMoney(
+                      displayMonthlyBalance,
+                      currency: displayCurrency,
+                    ),
+                    budget: formatMoney(
+                      displayEffectiveBudget,
+                      currency: displayCurrency,
+                    ),
+                  ),
+                  PopupMenuButton<String>(
+                    padding: EdgeInsets.zero,
+                    onSelected: (value) async {
+                      if (value == 'edit') {
+                        await onEdit();
+                      }
+                      if (value == 'delete') {
+                        await onDelete();
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'edit', child: Text('编辑')),
+                      PopupMenuItem(value: 'delete', child: Text('删除')),
                     ],
                   ),
-                ),
-                PopupMenuButton<String>(
-                  onSelected: (value) async {
-                    if (value == 'edit') {
-                      await onEdit();
-                    }
-                    if (value == 'delete') {
-                      await onDelete();
-                    }
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'edit', child: Text('编辑')),
-                    PopupMenuItem(value: 'delete', child: Text('删除')),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: _SummaryMetric(
-                    label: '预算',
-                    value: formatMoney(monthlyBudget),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _SummaryMetric(
-                    label: '余额',
-                    value: formatMoney(monthlyBalance),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _SummaryMetric(
-                    label: '已使用',
-                    value: formatMoney(spent),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                minHeight: 8,
-                value: usage,
-                backgroundColor: Theme.of(context).dividerColor.withValues(alpha: 0.35),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              '$percent%',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            if (isExpanded) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _SummaryMetric(
+                    label: '实际',
+                    value: formatMoney(displaySpent, currency: displayCurrency),
+                  ),
+                  _SummaryMetric(
+                    label: '预计',
+                    value:
+                        formatMoney(displayPlanned, currency: displayCurrency),
+                  ),
+                  _SummaryMetric(
+                    label: '月预算',
+                    value: formatMoney(
+                      displayMonthlyBudget,
+                      currency: displayCurrency,
+                    ),
+                  ),
+                  _SummaryMetric(
+                    label: '年度预算',
+                    value: formatMoney(
+                      displayAnnualBudget,
+                      currency: displayCurrency,
+                    ),
+                  ),
+                  _SummaryMetric(
+                    label: '年内已用',
+                    value: formatMoney(
+                      displayAnnualSpent,
+                      currency: displayCurrency,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  minHeight: 5,
+                  value: usage,
+                  backgroundColor:
+                      Theme.of(context).dividerColor.withValues(alpha: 0.35),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '已用 ${(usage * 100).round()}%',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            ],
           ],
         ),
       ),
+    );
+  }
+}
+
+class _InlineBudgetSummary extends StatelessWidget {
+  const _InlineBudgetSummary({
+    required this.balance,
+    required this.budget,
+  });
+
+  final String balance;
+  final String budget;
+
+  @override
+  Widget build(BuildContext context) {
+    final labelStyle = Theme.of(context).textTheme.labelSmall;
+    final valueStyle = Theme.of(context).textTheme.labelMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+        );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text.rich(
+          TextSpan(
+            text: '余额 ',
+            style: labelStyle,
+            children: [
+              TextSpan(text: balance, style: valueStyle),
+            ],
+          ),
+          textAlign: TextAlign.right,
+        ),
+        Text.rich(
+          TextSpan(
+            text: '预算 ',
+            style: labelStyle,
+            children: [
+              TextSpan(text: budget, style: valueStyle),
+            ],
+          ),
+          textAlign: TextAlign.right,
+        ),
+      ],
     );
   }
 }
@@ -304,13 +403,23 @@ class _SummaryMetric extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(height: 4),
-        Text(value, style: Theme.of(context).textTheme.titleMedium),
-      ],
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 92),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.45),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: Theme.of(context).textTheme.labelSmall),
+            const SizedBox(height: 2),
+            Text(value, style: Theme.of(context).textTheme.labelLarge),
+          ],
+        ),
+      ),
     );
   }
 }

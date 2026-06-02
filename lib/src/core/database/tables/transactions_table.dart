@@ -11,7 +11,12 @@ class Transactions extends Table {
   TextColumn get categoryId => text().nullable().references(Categories, #id)();
   RealColumn get amount => real()();
   TextColumn get currency => text()();
+  RealColumn get toAmount => real().nullable()();
+  TextColumn get toCurrency => text().nullable()();
+  DateTimeColumn get recordDate => dateTime().nullable()();
   DateTimeColumn get transactionDate => dateTime()();
+  TextColumn get status => text().nullable()();
+  TextColumn get recurringRuleId => text().nullable()();
   TextColumn get description => text().nullable()();
   TextColumn get merchant => text().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
