@@ -35,8 +35,9 @@ class AiAnalysisService {
           },
           {'role': 'user', 'content': prompt},
         ],
-        'max_tokens': 4000,
+        'max_tokens': 16000,
         'temperature': 0.3,
+        'stream': false,
       }),
     );
 
@@ -45,7 +46,16 @@ class AiAnalysisService {
     }
 
     final data = jsonDecode(response.body);
-    final content = data['choices'][0]['message']['content'] as String;
+    final message = data['choices'][0]['message'];
+    final content = (message['content'] as String?)?.trim() ?? '';
+    if (content.isEmpty) {
+      // MiMo reasoning model may put response in reasoning_content
+      final reasoning = (message['reasoning_content'] as String?)?.trim() ?? '';
+      if (reasoning.isNotEmpty) {
+        return '<div style="padding:16px"><p>$reasoning</p></div>';
+      }
+      throw Exception('AI 返回内容为空，请检查 API 配置或稍后重试');
+    }
     return content;
   }
 
