@@ -9,6 +9,7 @@ import 'package:open_filex/open_filex.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/mutations/export_mutations.dart';
+import '../../core/providers/repository_provider.dart';
 
 import '../../core/settings/app_settings_controller.dart';
 import '../../core/settings/app_theme_style.dart';
@@ -567,6 +568,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               await widget.repository.saveAiGatewayUrl(
                                 _gatewayUrlController.text.trim(),
                               );
+                              ref.invalidate(financeRepositoryProvider);
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('AI 网关地址已保存')),
