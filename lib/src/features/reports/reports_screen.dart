@@ -1,8 +1,10 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/data/finance_repository.dart';
+import '../../core/services/ai_analysis_service.dart';
 import '../../core/models/account.dart';
 import '../../core/models/category.dart';
 import '../../core/models/monthly_summary.dart';
@@ -30,6 +32,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
   ReportViewType viewType = ReportViewType.line;
   ReportRangeType rangeType = ReportRangeType.last6Months;
   ReportMeasureMode measureMode = ReportMeasureMode.monthly;
+  String? _aiHtml;
+  bool _aiLoading = false;
 
   @override
   Widget build(BuildContext context) {
@@ -137,6 +141,68 @@ class _ReportsScreenState extends State<ReportsScreen> {
             ),
           ],
         ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _aiLoading
+                    ? null
+                    : () async {
+                        final repo = widget.repository;
+                        if (repo.aiApiKey.isEmpty) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('请先在设置中配置 AI API Key')),
+                            );
+                          }
+                          return;
+                        }
+                        setState(() {
+                          _aiLoading = true;
+                          _aiHtml = null;
+                        });
+                        try {
+                          final service = AiAnalysisService(
+                            baseUrl: repo.aiBaseUrl,
+                            apiKey: repo.aiApiKey,
+                            model: repo.aiModel,
+                          );
+                          final html = await service.generateAnalysis(repo);
+                          if (mounted) {
+                            setState(() => _aiHtml = html);
+                          }
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('AI 分析失败：$e')),
+                            );
+                          }
+                        } finally {
+                          if (mounted) {
+                            setState(() => _aiLoading = false);
+                          }
+                        }
+                      },
+                icon: _aiLoading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.auto_awesome_outlined),
+                label: const Text('AI 分析'),
+              ),
+            ),
+          ],
+        ),
+        if (_aiHtml != null) ...[
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 500,
+            child: _AiWebView(html: _aiHtml!),
+          ),
+        ],
         const SizedBox(height: 16),
         SectionCard(
           title: '期间汇总',
@@ -328,6 +394,36 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 }
 
+// ── AI WebView helper ─────────────────────────────────────────────────
+class _AiWebView extends StatefulWidget {
+  const _AiWebView({required this.html});
+  final String html;
+
+  @override
+  State<_AiWebView> createState() => _AiWebViewState();
+}
+
+class _AiWebViewState extends State<_AiWebView> {
+  late final WebViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..loadHtmlString(widget.html);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: WebViewWidget(controller: _controller),
+    );
+  }
+}
+
+// ── Existing helper widgets ────────────────────────────────────────────
 class _IncomeExpenseLineChart extends StatelessWidget {
   const _IncomeExpenseLineChart({
     required this.summaries,

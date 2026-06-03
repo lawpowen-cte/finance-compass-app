@@ -9,3 +9,6 @@ path_provider_foundation=/home/pwlaw/.pub-cache/hosted/pub.dev/path_provider_fou
 path_provider_linux=/home/pwlaw/.pub-cache/hosted/pub.dev/path_provider_linux-2.2.1/
 path_provider_windows=/home/pwlaw/.pub-cache/hosted/pub.dev/path_provider_windows-2.3.0/
 sqlite3_flutter_libs=/home/pwlaw/.pub-cache/hosted/pub.dev/sqlite3_flutter_libs-0.5.42/
+webview_flutter=/home/pwlaw/.pub-cache/hosted/pub.dev/webview_flutter-4.13.0/
+webview_flutter_android=/home/pwlaw/.pub-cache/hosted/pub.dev/webview_flutter_android-4.10.1/
+webview_flutter_wkwebview=/home/pwlaw/.pub-cache/hosted/pub.dev/webview_flutter_wkwebview-3.23.0/

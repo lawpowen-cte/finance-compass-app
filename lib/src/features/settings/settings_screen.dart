@@ -33,11 +33,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isBusy = false;
   final _rateControllers = <String, TextEditingController>{};
   var _currencyOrder = <String>[];
+  late final TextEditingController _aiBaseUrlController;
+  late final TextEditingController _aiApiKeyController;
+  late final TextEditingController _aiModelController;
 
   @override
   void initState() {
     super.initState();
     _syncRateControllers();
+    _aiBaseUrlController = TextEditingController(
+      text: widget.repository.aiBaseUrl,
+    );
+    _aiApiKeyController = TextEditingController(
+      text: widget.repository.aiApiKey,
+    );
+    _aiModelController = TextEditingController(
+      text: widget.repository.aiModel,
+    );
   }
 
   @override
@@ -45,6 +57,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repository.metaValues != widget.repository.metaValues) {
       _syncRateControllers();
+      _aiBaseUrlController.text = widget.repository.aiBaseUrl;
+      _aiApiKeyController.text = widget.repository.aiApiKey;
+      _aiModelController.text = widget.repository.aiModel;
     }
   }
 
@@ -53,6 +68,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     for (final controller in _rateControllers.values) {
       controller.dispose();
     }
+    _aiBaseUrlController.dispose();
+    _aiApiKeyController.dispose();
+    _aiModelController.dispose();
     super.dispose();
   }
 
@@ -534,6 +552,64 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onPressed: _isBusy ? null : _loadExampleData,
                 icon: const Icon(Icons.science_outlined),
                 label: const Text('写入示例资料'),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SectionCard(
+              title: 'AI 分析配置',
+              subtitle: '配置 MiMo API 以启用智能财务分析',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _aiBaseUrlController,
+                    decoration: const InputDecoration(
+                      labelText: 'API Base URL',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _aiApiKeyController,
+                    decoration: const InputDecoration(
+                      labelText: 'API Key',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    obscureText: true,
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _aiModelController,
+                    decoration: const InputDecoration(
+                      labelText: 'Model Name',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonalIcon(
+                    onPressed: _isBusy
+                        ? null
+                        : () async {
+                            await _runBusyTask(() async {
+                              await widget.repository.saveAiConfig(
+                                _aiBaseUrlController.text.trim(),
+                                _aiApiKeyController.text.trim(),
+                                _aiModelController.text.trim(),
+                              );
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('AI 配置已保存')),
+                                );
+                              }
+                            });
+                          },
+                    icon: const Icon(Icons.save_outlined),
+                    label: const Text('保存 AI 配置'),
+                  ),
+                ],
               ),
             ),
           ],
