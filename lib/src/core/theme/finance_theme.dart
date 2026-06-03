@@ -178,41 +178,48 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
     textTheme: TextTheme(
       headlineSmall: TextStyle(
         fontSize: 31,
-        fontWeight: FontWeight.w700,
+        fontWeight: FontWeight.w800,
         letterSpacing: -0.7,
         color: palette.textPrimary,
       ),
       titleLarge: TextStyle(
         fontSize: 22,
-        fontWeight: FontWeight.w600,
+        fontWeight: FontWeight.w700,
         letterSpacing: -0.3,
         color: palette.textPrimary,
       ),
       titleMedium: TextStyle(
         fontSize: 17,
-        fontWeight: FontWeight.w600,
+        fontWeight: FontWeight.w700,
         letterSpacing: -0.2,
         color: palette.textPrimary,
       ),
       titleSmall: TextStyle(
         fontSize: 13,
-        fontWeight: FontWeight.w600,
+        fontWeight: FontWeight.w700,
         color: palette.textPrimary,
       ),
       bodyMedium: TextStyle(
         fontSize: 14,
+        fontWeight: FontWeight.w500,
         height: 1.35,
         color: palette.textPrimary,
       ),
       bodySmall: TextStyle(
         fontSize: 12,
+        fontWeight: FontWeight.w500,
         height: 1.3,
         color: palette.textMuted,
       ),
       labelLarge: TextStyle(
         fontSize: 12,
-        fontWeight: FontWeight.w600,
+        fontWeight: FontWeight.w700,
         letterSpacing: 0.1,
+        color: palette.textMuted,
+      ),
+      labelSmall: TextStyle(
+        fontSize: 10,
+        fontWeight: FontWeight.w600,
         color: palette.textMuted,
       ),
     ),

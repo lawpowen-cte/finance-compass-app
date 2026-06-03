@@ -15,38 +15,41 @@ class SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final cardColor = theme.cardColor;
-    return Card(
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: theme.cardColor,
+        border: Border.all(
+          color: theme.dividerColor.withValues(alpha: 0.4),
+          width: 0.8,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x080F172A),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: cardColor),
-            color: cardColor,
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x140F172A),
-                blurRadius: 24,
-                offset: Offset(0, 10),
-              ),
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: theme.textTheme.bodySmall?.color,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                )),
+            if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(subtitle!, style: theme.textTheme.bodySmall),
             ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: Theme.of(context).textTheme.titleMedium),
-                if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(subtitle!, style: Theme.of(context).textTheme.bodySmall),
-                ],
-                const SizedBox(height: 12),
-                child,
-              ],
-            ),
-          ),
+            const SizedBox(height: 10),
+            child,
+          ],
         ),
       ),
     );

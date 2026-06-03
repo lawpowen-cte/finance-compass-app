@@ -695,6 +695,56 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
   }
 }
 
+class _GoalStatusLine extends StatelessWidget {
+  const _GoalStatusLine({required this.summary});
+
+  final AssetGoalProgressSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    if (summary.isReached) {
+      final date = summary.reachedAt;
+      final dateStr = date == null
+          ? ''
+          : '${date.year}年${date.month}月';
+      return Text(
+        '🎉 已达成 $dateStr',
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: const Color(0xFF15803D),
+              fontWeight: FontWeight.w600,
+            ),
+      );
+    }
+
+    // 未达成：计算剩余金额和预估月数
+    final remaining = summary.goal.targetAmount - summary.currentAssets;
+    final history = summary.history;
+    String estimate = '';
+    if (history.length >= 2) {
+      final recent = history.length > 3
+          ? history.sublist(history.length - 3)
+          : history;
+      final firstVal = recent.first.totalAssets;
+      final lastVal = recent.last.totalAssets;
+      final months = recent.length - 1;
+      if (months > 0 && lastVal > firstVal) {
+        final monthlyGrowth = (lastVal - firstVal) / months;
+        if (monthlyGrowth > 0) {
+          final monthsNeeded = (remaining / monthlyGrowth).ceil();
+          if (monthsNeeded <= 120) {
+            estimate = ' · 预计${monthsNeeded > 0 ? monthsNeeded : 1}个月后达成';
+          }
+        }
+      }
+    }
+
+    return Text(
+      '还差 ${formatMoney(remaining)}$estimate',
+      style: Theme.of(context).textTheme.bodySmall,
+    );
+  }
+}
+
 class _GoalCard extends StatelessWidget {
   const _GoalCard({
     required this.summary,
@@ -728,12 +778,7 @@ class _GoalCard extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      summary.reachedAt == null
-                          ? '目标进行中'
-                          : '达成于 ${summary.reachedAt!.year}-${summary.reachedAt!.month.toString().padLeft(2, '0')}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                    _GoalStatusLine(summary: summary),
                   ],
                 ),
               ),
@@ -749,33 +794,35 @@ class _GoalCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              _MetricChip(
-                label: '目标金额',
-                value: formatMoney(summary.goal.targetAmount),
-              ),
-              _MetricChip(
-                label: '当前总资产',
-                value: formatMoney(summary.currentAssets),
-              ),
-              _MetricChip(
-                label: '达成进度',
-                value: '${(summary.progressRatio * 100).toStringAsFixed(1)}%',
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              minHeight: 10,
-              value: summary.progressRatio.clamp(0, 1),
+          if (!summary.isReached) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                _MetricChip(
+                  label: '目标金额',
+                  value: formatMoney(summary.goal.targetAmount),
+                ),
+                _MetricChip(
+                  label: '当前总资产',
+                  value: formatMoney(summary.currentAssets),
+                ),
+                _MetricChip(
+                  label: '达成进度',
+                  value: '${(summary.progressRatio * 100).toStringAsFixed(1)}%',
+                ),
+              ],
             ),
-          ),
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                minHeight: 10,
+                value: summary.progressRatio.clamp(0, 1),
+              ),
+            ),
+          ],
         ],
       ),
     );

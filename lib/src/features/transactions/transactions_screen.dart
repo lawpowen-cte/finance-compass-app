@@ -105,14 +105,29 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
       totalsByType[transaction.type] = (totalsByType[transaction.type] ?? 0) +
           repository.transactionAmountInBase(transaction);
     }
-    final plannedTotal = filteredTransactions
-        .where((item) => item.status == TransactionStatus.planned)
-        .fold<double>(
-            0, (sum, item) => sum + repository.transactionAmountInBase(item));
-    final actualTotal = filteredTransactions
-        .where((item) => item.status != TransactionStatus.planned)
-        .fold<double>(
-            0, (sum, item) => sum + repository.transactionAmountInBase(item));
+    final actualTransactions = filteredTransactions
+        .where((item) => item.status != TransactionStatus.planned);
+    final actualIncome = actualTransactions
+        .where((item) => item.type == TransactionType.income)
+        .fold<double>(0, (sum, item) => sum + repository.transactionAmountInBase(item));
+    final actualExpense = actualTransactions
+        .where((item) => item.type == TransactionType.expense)
+        .fold<double>(0, (sum, item) => sum + repository.transactionAmountInBase(item));
+    final actualAdjustment = actualTransactions
+        .where((item) => item.type == TransactionType.adjustment)
+        .fold<double>(0, (sum, item) => sum + repository.transactionAmountInBase(item));
+    final netCashFlow = actualIncome - actualExpense;
+
+    final allIncome = filteredTransactions
+        .where((item) => item.type == TransactionType.income)
+        .fold<double>(0, (sum, item) => sum + repository.transactionAmountInBase(item));
+    final allExpense = filteredTransactions
+        .where((item) => item.type == TransactionType.expense)
+        .fold<double>(0, (sum, item) => sum + repository.transactionAmountInBase(item));
+    final allAdjustment = filteredTransactions
+        .where((item) => item.type == TransactionType.adjustment)
+        .fold<double>(0, (sum, item) => sum + repository.transactionAmountInBase(item));
+    final netAssetChange = allIncome - allExpense + allAdjustment;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -409,24 +424,18 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 color: const Color(0xFFB91C1C),
               ),
               _TypeTotalChip(
-                label: '转账',
-                value: totalsByType[TransactionType.transfer] ?? 0,
-                color: const Color(0xFF475569),
+                label: '净现金流',
+                value: netCashFlow,
+                color: netCashFlow >= 0
+                    ? const Color(0xFF15803D)
+                    : const Color(0xFFB91C1C),
               ),
               _TypeTotalChip(
-                label: '注资调整',
-                value: totalsByType[TransactionType.adjustment] ?? 0,
-                color: const Color(0xFF0369A1),
-              ),
-              _TypeTotalChip(
-                label: '预计',
-                value: plannedTotal,
-                color: const Color(0xFFB45309),
-              ),
-              _TypeTotalChip(
-                label: '实际',
-                value: actualTotal,
-                color: const Color(0xFF0F766E),
+                label: '净现金流（含预计）',
+                value: netAssetChange,
+                color: netAssetChange >= 0
+                    ? const Color(0xFF15803D)
+                    : const Color(0xFFB91C1C),
               ),
             ],
           ),
@@ -512,141 +521,144 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                         ? null
                         : _categoryNameOrFallback(
                             repository, transaction.categoryId!);
+                    final hint =
+                        _displayConversionHint(repository, transaction);
                     return Container(
-                      margin: const EdgeInsets.only(bottom: 6),
+                      margin: const EdgeInsets.only(bottom: 4),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
+                          horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(10),
                         color: Theme.of(context).cardColor,
                         border: Border.all(
                           color: Theme.of(context)
                               .dividerColor
-                              .withValues(alpha: 0.5),
-                          width: 0.8,
+                              .withValues(alpha: 0.35),
+                          width: 0.6,
                         ),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x080F172A),
-                            blurRadius: 6,
-                            offset: Offset(0, 2),
-                          ),
-                        ],
                       ),
-                      child: Column(
+                      child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Row(
-                                      children: [
-                                        Text(
-                                          _displayAmount(transaction),
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w700,
-                                            color: _amountColor(
-                                                transaction.type),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                          _typeLabel(transaction.type),
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .labelSmall
-                                              ?.copyWith(
-                                                color: _amountColor(
-                                                    transaction.type),
-                                              ),
-                                        ),
-                                      ],
-                                    ),
-                                    if (_displayConversionHint(
-                                                repository, transaction)
-                                            .isNotEmpty)
-                                      Padding(
-                                        padding:
-                                            const EdgeInsets.only(top: 2),
-                                        child: Text(
-                                          _displayConversionHint(
-                                              repository, transaction),
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .labelSmall,
-                                        ),
+                                    Text(
+                                      _displayAmount(transaction),
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 14,
+                                        color: _amountColor(
+                                            transaction.type),
                                       ),
+                                    ),
+                                    const SizedBox(width: 5),
+                                    Text(
+                                      _typeLabel(transaction.type),
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w500,
+                                        color: _amountColor(
+                                            transaction.type),
+                                      ),
+                                    ),
                                   ],
                                 ),
-                              ),
-                              const SizedBox(width: 12),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    '${transaction.transactionDate.day.toString().padLeft(2, '0')}-${transaction.transactionDate.month.toString().padLeft(2, '0')}',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall,
+                                if (hint.isNotEmpty)
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.only(top: 1),
+                                    child: Text(hint,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(fontSize: 10)),
                                   ),
-                                  PopupMenuButton<String>(
-                                    padding: EdgeInsets.zero,
-                                    iconSize: 20,
-                                    onSelected: (value) =>
-                                        _handleTransactionAction(
-                                      context,
-                                      value,
-                                      transaction,
+                                if (_isMeaningfulDescription(transaction))
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.only(top: 1),
+                                    child: Text(
+                                      transaction.description!,
+                                      style: TextStyle(
+                                          fontSize: 10,
+                                          color: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.color),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    itemBuilder: (_) => const [
-                                      PopupMenuItem(
-                                          value: 'edit',
-                                          child: Text('编辑')),
-                                      PopupMenuItem(
-                                          value: 'reuse',
-                                          child: Text('复用新增')),
-                                      PopupMenuItem(
-                                          value: 'template',
-                                          child: Text('保存模板')),
-                                      PopupMenuItem(
-                                          value: 'recurring',
-                                          child: Text('保存周期')),
-                                      PopupMenuDivider(),
-                                      PopupMenuItem(
-                                          value: 'delete',
-                                          child: Text('删除')),
-                                    ],
                                   ),
+                                const SizedBox(height: 3),
+                                Wrap(
+                                  spacing: 4,
+                                  runSpacing: 3,
+                                  children: [
+                                    _MetaChip(
+                                        label: repository.accountName(
+                                            transaction.accountId)),
+                                    if (categoryName != null)
+                                      _MetaChip(label: categoryName),
+                                    if (transaction.status ==
+                                        TransactionStatus.planned)
+                                      const _PlannedChip(),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                '${transaction.transactionDate.day.toString().padLeft(2, '0')}-${transaction.transactionDate.month.toString().padLeft(2, '0')}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.color,
+                                ),
+                              ),
+                              PopupMenuButton<String>(
+                                padding: EdgeInsets.zero,
+                                iconSize: 16,
+                                icon: Icon(Icons.more_horiz,
+                                    size: 16,
+                                    color: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.color),
+                                onSelected: (value) =>
+                                    _handleTransactionAction(
+                                  context,
+                                  value,
+                                  transaction,
+                                ),
+                                itemBuilder: (_) => const [
+                                  PopupMenuItem(
+                                      value: 'edit',
+                                      child: Text('编辑')),
+                                  PopupMenuItem(
+                                      value: 'reuse',
+                                      child: Text('复用新增')),
+                                  PopupMenuItem(
+                                      value: 'template',
+                                      child: Text('保存模板')),
+                                  PopupMenuItem(
+                                      value: 'recurring',
+                                      child: Text('保存周期')),
+                                  PopupMenuDivider(),
+                                  PopupMenuItem(
+                                      value: 'delete',
+                                      child: Text('删除')),
                                 ],
                               ),
-                            ],
-                          ),
-                          if (_isMeaningfulDescription(transaction)) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              transaction.description!,
-                              style: Theme.of(context).textTheme.bodySmall,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 4,
-                            children: [
-                              _MetaChip(
-                                  label: repository
-                                      .accountName(transaction.accountId)),
-                              if (categoryName != null)
-                                _MetaChip(label: categoryName),
-                              if (transaction.status ==
-                                  TransactionStatus.planned)
-                                const _PlannedChip(),
                             ],
                           ),
                         ],
