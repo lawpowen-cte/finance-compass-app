@@ -150,10 +150,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     ? null
                     : () async {
                         final repo = widget.repository;
-                        if (repo.aiApiKey.isEmpty) {
+                        final gatewayUrl = repo.aiGatewayUrl;
+                        if (gatewayUrl.isEmpty) {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('请先在设置中配置 AI API Key')),
+                              const SnackBar(content: Text('请先在设置中配置 AI 网关地址')),
                             );
                           }
                           return;
@@ -164,9 +165,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                         });
                         try {
                           final service = AiAnalysisService(
-                            baseUrl: repo.aiBaseUrl,
-                            apiKey: repo.aiApiKey,
-                            model: repo.aiModel,
+                            gatewayUrl: gatewayUrl,
                           );
                           final html = await service.generateAnalysis(repo);
                           if (mounted) {
@@ -174,8 +173,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           }
                         } catch (e) {
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('AI 分析失败：$e')),
+                            final msg = e is AiNetworkException
+                                ? e.message
+                                : 'AI 分析失败：$e';
+                            showDialog(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('AI 分析失败'),
+                                content: Text(msg, style: const TextStyle(fontSize: 14)),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx),
+                                    child: const Text('确定'),
+                                  ),
+                                ],
+                              ),
                             );
                           }
                         } finally {

@@ -2220,19 +2220,11 @@ class FinanceRepository {
   }
 
   // ── AI analysis config ──────────────────────────────────────────────
-  String get aiBaseUrl =>
-      _metaValues['ai_base_url'] ?? 'https://token-plan-cn.xiaomimimo.com/v1';
-  String get aiApiKey => _metaValues['ai_api_key'] ?? '';
-  String get aiModel => _metaValues['ai_model'] ?? 'mimo-v2.5-pro';
+  String get aiGatewayUrl =>
+      _metaValues['ai_gateway_url'] ?? '';
 
-  Future<void> saveAiConfig(
-    String baseUrl,
-    String apiKey,
-    String model,
-  ) async {
-    await database.setMetaValue('ai_base_url', baseUrl);
-    await database.setMetaValue('ai_api_key', apiKey);
-    await database.setMetaValue('ai_model', model);
+  Future<void> saveAiGatewayUrl(String gatewayUrl) async {
+    await database.setMetaValue('ai_gateway_url', gatewayUrl);
   }
 }
 

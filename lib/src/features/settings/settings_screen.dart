@@ -9,7 +9,6 @@ import 'package:open_filex/open_filex.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/mutations/export_mutations.dart';
-import '../../core/providers/repository_provider.dart';
 
 import '../../core/settings/app_settings_controller.dart';
 import '../../core/settings/app_theme_style.dart';
@@ -34,22 +33,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isBusy = false;
   final _rateControllers = <String, TextEditingController>{};
   var _currencyOrder = <String>[];
-  late final TextEditingController _aiBaseUrlController;
-  late final TextEditingController _aiApiKeyController;
-  late final TextEditingController _aiModelController;
+  late final TextEditingController _gatewayUrlController;
 
   @override
   void initState() {
     super.initState();
     _syncRateControllers();
-    _aiBaseUrlController = TextEditingController(
-      text: widget.repository.aiBaseUrl,
-    );
-    _aiApiKeyController = TextEditingController(
-      text: widget.repository.aiApiKey,
-    );
-    _aiModelController = TextEditingController(
-      text: widget.repository.aiModel,
+    _gatewayUrlController = TextEditingController(
+      text: widget.repository.aiGatewayUrl,
     );
   }
 
@@ -58,9 +49,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repository.metaValues != widget.repository.metaValues) {
       _syncRateControllers();
-      _aiBaseUrlController.text = widget.repository.aiBaseUrl;
-      _aiApiKeyController.text = widget.repository.aiApiKey;
-      _aiModelController.text = widget.repository.aiModel;
+      _gatewayUrlController.text = widget.repository.aiGatewayUrl;
     }
   }
 
@@ -69,9 +58,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     for (final controller in _rateControllers.values) {
       controller.dispose();
     }
-    _aiBaseUrlController.dispose();
-    _aiApiKeyController.dispose();
-    _aiModelController.dispose();
+    _gatewayUrlController.dispose();
     super.dispose();
   }
 
@@ -557,34 +544,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             const SizedBox(height: 16),
             SectionCard(
-              title: 'AI 分析配置',
-              subtitle: '配置 MiMo API 以启用智能财务分析',
+              title: 'AI 网关',
+              subtitle: '配置 AI 分析网关地址',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   TextField(
-                    controller: _aiBaseUrlController,
+                    controller: _gatewayUrlController,
                     decoration: const InputDecoration(
-                      labelText: 'API Base URL',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _aiApiKeyController,
-                    decoration: const InputDecoration(
-                      labelText: 'API Key',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    obscureText: true,
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _aiModelController,
-                    decoration: const InputDecoration(
-                      labelText: 'Model Name',
+                      labelText: '网关地址',
+                      hintText: 'http://100.x.x.x:5000',
                       border: OutlineInputBorder(),
                       isDense: true,
                     ),
@@ -595,21 +564,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ? null
                         : () async {
                             await _runBusyTask(() async {
-                              await widget.repository.saveAiConfig(
-                                _aiBaseUrlController.text.trim(),
-                                _aiApiKeyController.text.trim(),
-                                _aiModelController.text.trim(),
+                              await widget.repository.saveAiGatewayUrl(
+                                _gatewayUrlController.text.trim(),
                               );
-                              ref.invalidate(financeRepositoryProvider);
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('AI 配置已保存')),
+                                  const SnackBar(content: Text('AI 网关地址已保存')),
                                 );
                               }
                             });
                           },
                     icon: const Icon(Icons.save_outlined),
-                    label: const Text('保存 AI 配置'),
+                    label: const Text('保存'),
                   ),
                 ],
               ),

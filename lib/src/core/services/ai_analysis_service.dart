@@ -1,77 +1,79 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../data/finance_repository.dart';
 import '../models/account.dart';
-import '../models/transaction.dart';
-import '../utils/currency_formatter.dart';
 import '../utils/month_key.dart';
 
 class AiAnalysisService {
-  final String baseUrl;
-  final String apiKey;
-  final String model;
+  final String gatewayUrl;
 
   AiAnalysisService({
-    required this.baseUrl,
-    required this.apiKey,
-    required this.model,
+    required this.gatewayUrl,
   });
 
   Future<String> generateAnalysis(FinanceRepository repository) async {
-    final prompt = _buildPrompt(repository);
-    final response = await http.post(
-      Uri.parse('$baseUrl/chat/completions'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $apiKey',
-      },
-      body: jsonEncode({
-        'model': model,
-        'messages': [
-          {
-            'role': 'system',
-            'content': '你是一个个人财务分析师。根据用户的财务数据生成简洁的中文分析报告。输出纯HTML，不要markdown，不要```html```包裹。使用内联样式，配色柔和（背景#F6F8FA，文字#3D6058，绿色#7BAE8A，红色#D49A9A）。表格用border-collapse:collapse，td/th加padding:6px 10px。整体padding:16px。',
-          },
-          {'role': 'user', 'content': prompt},
-        ],
-        'max_tokens': 16000,
-        'temperature': 0.3,
-        'stream': false,
-      }),
-    );
+    final data = _buildRequestData(repository);
+    final uri = Uri.parse('$gatewayUrl/api/analyze');
 
-    if (response.statusCode != 200) {
-      throw Exception('AI API error: ${response.statusCode} ${response.body}');
-    }
+    const maxRetries = 2;
+    Exception? lastError;
 
-    final data = jsonDecode(response.body);
-    final message = data['choices'][0]['message'];
-    final content = (message['content'] as String?)?.trim() ?? '';
-    if (content.isEmpty) {
-      // MiMo reasoning model may put response in reasoning_content
-      final reasoning = (message['reasoning_content'] as String?)?.trim() ?? '';
-      if (reasoning.isNotEmpty) {
-        return '<div style="padding:16px"><p>$reasoning</p></div>';
+    for (int attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        final response = await http
+            .post(
+              uri,
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'data': data}),
+            )
+            .timeout(const Duration(seconds: 120));
+
+        if (response.statusCode != 200) {
+          throw Exception('Gateway 返回 ${response.statusCode}: ${response.body}');
+        }
+
+        final result = jsonDecode(response.body);
+        return result['html'] as String;
+      } on TimeoutException {
+        lastError = Exception('请求超时（120秒）');
+        if (attempt < maxRetries) {
+          await Future.delayed(Duration(seconds: 2 * (attempt + 1)));
+        }
+      } catch (e) {
+        lastError = e is Exception ? e : Exception(e.toString());
+        if (attempt < maxRetries) {
+          await Future.delayed(Duration(seconds: 2 * (attempt + 1)));
+        }
       }
-      throw Exception('AI 返回内容为空，请检查 API 配置或稍后重试');
     }
-    return content;
+
+    throw AiNetworkException(
+      '无法连接到 AI 网关\n\n'
+      '请检查：\n'
+      '1. 网关服务器是否运行中\n'
+      '2. 手机网络是否正常\n'
+      '3. 网关地址是否正确',
+      originalError: lastError,
+    );
   }
 
-  String _buildPrompt(FinanceRepository repository) {
+  Map<String, dynamic> _buildRequestData(FinanceRepository repository) {
     final now = DateTime.now();
     final currentMonth = monthKeyFromDate(now);
     final lastMonth = monthKeyFromDate(DateTime(now.year, now.month - 1));
 
     // Account summary
-    final accountLines = <String>[];
+    final accounts = <Map<String, dynamic>>[];
     for (final group in ReportGroup.values) {
-      final accounts = repository.accountsByGroup(group);
-      if (accounts.isEmpty) continue;
-      for (final acc in accounts) {
+      for (final acc in repository.accountsByGroup(group)) {
         final balance = repository.accountBalanceAt(acc.id, now);
-        accountLines.add('${acc.name} (${acc.accountType.name}): ${formatMoney(balance, currency: acc.currency)}');
+        accounts.add({
+          'name': acc.name,
+          'type': acc.accountType.name,
+          'balance': balance,
+        });
       }
     }
 
@@ -81,61 +83,64 @@ class AiAnalysisService {
     final lastIncome = repository.totalIncomeForMonth(lastMonth);
     final lastExpense = repository.totalExpenseForMonth(lastMonth);
 
-    // Budget
-    final budgetLines = <String>[];
-    final budgets = repository.activeBudgetsForMonth(currentMonth);
-    for (final b in budgets) {
+    // Budgets
+    final budgets = <Map<String, dynamic>>[];
+    for (final b in repository.activeBudgetsForMonth(currentMonth)) {
       final effective = repository.effectiveBudgetForMonth(b, currentMonth);
       final spent = repository.expenseTotalForCategory(b.categoryId, currentMonth);
       final catName = repository.categoryName(b.categoryId);
-      budgetLines.add('$catName: 预算${formatMoney(effective)} 已用${formatMoney(spent)}');
+      budgets.add({
+        'category': catName,
+        'budget': effective,
+        'spent': spent,
+      });
     }
 
-    // Asset goals
-    final goalLines = <String>[];
-    final goalSummaries = repository.assetGoalSummaries();
-    for (final g in goalSummaries) {
-      final status = g.isReached ? '已达成' : '进行中';
+    // Goals
+    final goals = <Map<String, dynamic>>[];
+    for (final g in repository.assetGoalSummaries()) {
       final progress = (g.progressRatio * 100).toStringAsFixed(1);
-      final remaining = g.goal.targetAmount - g.currentAssets;
-      goalLines.add('${g.goal.name}: 目标${formatMoney(g.goal.targetAmount)} 当前${formatMoney(g.currentAssets)} 进度$progress% $status${g.isReached ? "" : " 还差${formatMoney(remaining)}"}');
+      goals.add({
+        'name': g.goal.name,
+        'target': g.goal.targetAmount,
+        'current': g.currentAssets,
+        'progress': progress,
+        'is_reached': g.isReached,
+      });
     }
 
     // Recent transactions
     final recent = repository.recentTransactions(limit: 10);
-    final txLines = recent.map((t) {
-      final sign = t.type == TransactionType.income ? '+' : '-';
-      return '${monthKeyFromDate(t.transactionDate)} ${t.type.name} $sign${formatMoney(t.amount, currency: t.currency)}';
+    final transactions = recent.map((t) {
+      return {
+        'date': monthKeyFromDate(t.transactionDate),
+        'type': t.type.name,
+        'amount': t.amount,
+      };
     }).toList();
 
-    return '''
-请分析以下财务数据并生成报告，包含：
-1. 财务概览（总资产、本月收支、与上月对比）
-2. 账户分析（各账户余额、资产配置建议）
-3. 预算执行情况
-4. 资产目标预测（根据历史数据推算预计达标时间）
-5. 支出建议
-
-【账户余额】
-${accountLines.join('\n')}
-
-【本月 ($currentMonth) 收支】
-收入: ${formatMoney(income)}
-支出: ${formatMoney(expense)}
-净现金流: ${formatMoney(income - expense)}
-
-【上月 ($lastMonth) 收支】
-收入: ${formatMoney(lastIncome)}
-支出: ${formatMoney(lastExpense)}
-
-【预算执行】
-${budgetLines.join('\n')}
-
-【资产目标】
-${goalLines.join('\n')}
-
-【近期交易】
-${txLines.join('\n')}
-''';
+    return {
+      'accounts': accounts,
+      'current_month': {
+        'income': income,
+        'expense': expense,
+        'net': income - expense,
+      },
+      'last_month': {
+        'income': lastIncome,
+        'expense': lastExpense,
+      },
+      'budgets': budgets,
+      'goals': goals,
+      'recent_transactions': transactions,
+    };
   }
+}
+
+class AiNetworkException implements Exception {
+  final String message;
+  final Exception? originalError;
+  AiNetworkException(this.message, {this.originalError});
+  @override
+  String toString() => message;
 }
