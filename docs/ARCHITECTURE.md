@@ -350,7 +350,7 @@ bash scripts/check.sh
 ```
 Flutter App (手机端)
     ↓ HTTP POST /api/analyze
-FastAPI Gateway (WSL, port 8888)
+FastAPI Gateway (WSL, port 5000)
     ↓ 路由到对应模型 API
 ├── MiMo v2.5 Pro (默认)
 ├── GPT-4 (可扩展)
@@ -366,10 +366,10 @@ FastAPI Gateway (WSL, port 8888)
 ```bash
 cd ~/projects/finance-compass-gateway
 source venv/bin/activate
-uvicorn main:app --host 0.0.0.0 --port 8888
+uvicorn main:app --host 0.0.0.0 --port 5000
 ```
 
-**健康检查**：`http://localhost:8888/health`
+**健康检查**：`http://localhost:5000/health`
 
 **添加新模型**：编辑 `main.py` 中的 `MODELS` 字典
 
@@ -404,7 +404,18 @@ Settings 页面 → AI 网关 → 输入网关地址（如 `http://100.x.x.x:888
 }
 ```
 
-### 10.5 关键文件
+### 10.5 端口分配
+
+| 端口 | 用途 | 服务 |
+|------|------|------|
+| 5000 | API 网关 | FastAPI (uvicorn) |
+| 8888 | HTML/文件传输 | Python HTTP Server |
+
+**外部访问**：
+- API: `http://100.72.179.116:5000/api/analyze`
+- 文件: `http://100.72.179.116:8888/<filename>`
+
+### 10.6 关键文件
 
 | 文件 | 用途 |
 |------|------|
