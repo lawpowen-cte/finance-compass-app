@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/data/finance_repository.dart';
 import '../../core/providers/ai_analysis_provider.dart';
@@ -14,9 +13,7 @@ import '../../core/utils/month_key.dart';
 import '../../core/utils/month_range.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
-import '../shared/simple_charts.dart';
 
-enum ReportViewType { line, pie, table }
 enum ReportRangeType { last3Months, last6Months, last12Months, currentYear }
 enum ReportMeasureMode { monthly, cumulative }
 
@@ -30,7 +27,6 @@ class ReportsScreen extends ConsumerStatefulWidget {
 }
 
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
-  ReportViewType viewType = ReportViewType.line;
   ReportRangeType rangeType = ReportRangeType.last6Months;
   ReportMeasureMode measureMode = ReportMeasureMode.monthly;
 
@@ -53,27 +49,13 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         ? rawSummaries
         : _toCumulativeSummaries(rawSummaries);
 
-    final totalExpense = rawSummaries.fold<double>(0, (sum, item) => sum + item.expense);
-    final totalIncome = rawSummaries.fold<double>(0, (sum, item) => sum + item.income);
-    final expenseByCategory = repository.categoryTotalsForMonths(
-      type: CategoryType.expense,
-      monthKeys: monthKeys,
-    );
-    final categoryPoints = expenseByCategory.entries
-        .where((entry) => entry.value > 0)
-        .map(
-          (entry) => ChartPoint(
-            label: repository.categoryName(entry.key),
-            value: entry.value,
-            color: _palette(entry.key),
-          ),
-        )
-        .toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-
     final budgetMonth = currentMonthKey;
     final activeBudgets = repository.activeBudgetsForMonth(budgetMonth);
-    final futureMonthFlags = monthKeys.map((monthKey) => _isFutureMonth(monthKey, now)).toList();
+    final goalSummaries = repository.assetGoalSummaries();
+
+    // 本月实际数据
+    final actualIncome = repository.totalIncomeForMonth(currentMonthKey);
+    final actualExpense = repository.totalExpenseForMonth(currentMonthKey);
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -84,42 +66,12 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
             DropdownButton<ReportRangeType>(
               value: rangeType,
               items: const [
-                DropdownMenuItem(
-                  value: ReportRangeType.last3Months,
-                  child: Text('近 3 个月'),
-                ),
-                DropdownMenuItem(
-                  value: ReportRangeType.last6Months,
-                  child: Text('近 6 个月'),
-                ),
-                DropdownMenuItem(
-                  value: ReportRangeType.last12Months,
-                  child: Text('近 12 个月'),
-                ),
-                DropdownMenuItem(
-                  value: ReportRangeType.currentYear,
-                  child: Text('本年度'),
-                ),
+                DropdownMenuItem(value: ReportRangeType.last3Months, child: Text('近 3 个月')),
+                DropdownMenuItem(value: ReportRangeType.last6Months, child: Text('近 6 个月')),
+                DropdownMenuItem(value: ReportRangeType.last12Months, child: Text('近 12 个月')),
+                DropdownMenuItem(value: ReportRangeType.currentYear, child: Text('本年度')),
               ],
               onChanged: (value) => setState(() => rangeType = value!),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: SegmentedButton<ReportViewType>(
-                segments: const [
-                  ButtonSegment(value: ReportViewType.line, label: Text('线图')),
-                  ButtonSegment(value: ReportViewType.pie, label: Text('饼图')),
-                  ButtonSegment(value: ReportViewType.table, label: Text('表格')),
-                ],
-                selected: {viewType},
-                onSelectionChanged: (selection) {
-                  setState(() => viewType = selection.first);
-                },
-              ),
             ),
           ],
         ),
@@ -138,67 +90,141 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                 },
               ),
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _AiAnalysisButton(),
-            ),
+            const SizedBox(width: 12),
+            Expanded(child: _AiAnalysisButton()),
           ],
         ),
         _AiResultDisplay(),
         const SizedBox(height: 16),
-        SectionCard(
-          title: '期间汇总',
-          child: Wrap(
-            spacing: 16,
-            runSpacing: 8,
-            children: [
-              Text('收入 ${formatMoney(totalIncome)}'),
-              Text('支出 ${formatMoney(totalExpense)}'),
-              Text('结余 ${formatMoney(totalIncome - totalExpense)}'),
-            ],
-          ),
+
+        // ── KPI 卡片 ──
+        _KpiCards(
+          totalAssets: repository.totalAssets(),
+          monthlyIncome: actualIncome,
+          monthlyExpense: actualExpense,
         ),
         const SizedBox(height: 16),
+
+        // ── 目标进度条 ──
+        if (goalSummaries.isNotEmpty) ...[
+          SectionCard(
+            title: '🎯 资产目标',
+            child: Column(
+              children: goalSummaries.map((g) {
+                final pct = g.progressRatio * 100;
+                final color = pct >= 100
+                    ? const Color(0xFF6AAF8A)
+                    : pct >= 50
+                        ? const Color(0xFF5B9BD5)
+                        : const Color(0xFFE8A838);
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              g.goal.name,
+                              style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+                            ),
+                          ),
+                          Text(
+                            '${formatMoney(g.currentAssets)} / ${formatMoney(g.goal.targetAmount)}',
+                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${pct.toStringAsFixed(1)}%',
+                            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: color),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: math.min(g.progressRatio, 1.0),
+                          backgroundColor: Colors.grey[200],
+                          valueColor: AlwaysStoppedAnimation(color),
+                          minHeight: 6,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+
+        // ── 收支趋势 ──
         SectionCard(
-          title: '收入 / 支出',
-          subtitle: rangeType == ReportRangeType.currentYear
-              ? '未来月份会用浅色标记'
-              : null,
-          child: _buildChart(
-            context,
-            viewType: viewType,
+          title: measureMode == ReportMeasureMode.monthly ? '📊 收支趋势' : '📊 累计趋势',
+          subtitle: rangeType == ReportRangeType.currentYear ? '未来月份浅色标记' : null,
+          child: _MonthlyBarChart(
             summaries: displaySummaries,
-            rawSummaries: rawSummaries,
-            futureMonthFlags: futureMonthFlags,
-            categoryPoints: categoryPoints.take(6).toList(),
+            now: now,
           ),
         ),
         const SizedBox(height: 16),
+
+        // ── 资产分布 ──
         SectionCard(
-          title: '预算状态',
+          title: '💰 资产分布',
+          child: _AssetDistribution(repository: repository),
+        ),
+        const SizedBox(height: 16),
+
+        // ── 预算状态 ──
+        SectionCard(
+          title: '📋 预算执行',
           subtitle: monthLabel(budgetMonth),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '总支出 / 总预算：${formatMoney(repository.totalBudgetExpenseForMonth(budgetMonth))} / '
-                '${formatMoney(repository.totalEffectiveBudgetForMonth(budgetMonth))}',
-              ),
-              const SizedBox(height: 10),
-              if (activeBudgets.isEmpty) const Text('暂无预算数据'),
+              if (activeBudgets.isEmpty) const Text('暂无预算数据', style: TextStyle(color: Colors.grey)),
               ...activeBudgets.map((budget) {
                 final effective = repository.effectiveBudgetForMonth(budget, budgetMonth);
                 final spent = repository.expenseTotalForCategory(budget.categoryId, budgetMonth);
+                final ratio = effective > 0 ? spent / effective : 0.0;
+                final isOver = ratio > 1.0;
+                final color = isOver
+                    ? const Color(0xFFE07B7B)
+                    : ratio > 0.8
+                        ? const Color(0xFFE8A838)
+                        : const Color(0xFF6AAF8A);
                 return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Row(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(child: Text(repository.categoryName(budget.categoryId))),
-                      Text('${formatMoney(spent)} / ${formatMoney(effective)}'),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              repository.categoryName(budget.categoryId),
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                          Text(
+                            '${formatMoney(spent)} / ${formatMoney(effective)}',
+                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: math.min(ratio, 1.0),
+                          backgroundColor: Colors.grey[200],
+                          valueColor: AlwaysStoppedAnimation(color),
+                          minHeight: 5,
+                        ),
+                      ),
                     ],
                   ),
                 );
@@ -207,26 +233,6 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
           ),
         ),
         const SizedBox(height: 16),
-        SectionCard(
-          title: '资产分组',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('总资产 ${formatMoney(repository.totalAssets())}'),
-              const SizedBox(height: 6),
-              Text('净资产 ${formatMoney(repository.totalAssets(includeCredit: false))}'),
-              const SizedBox(height: 10),
-              ...ReportGroup.values.map((group) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    '${_groupLabel(group)} ${formatMoney(repository.totalAssetsByGroup(group))}',
-                  ),
-                );
-              }),
-            ],
-          ),
-        ),
       ],
     );
   }
@@ -260,40 +266,200 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       );
     }).toList();
   }
+}
 
-  bool _isFutureMonth(String monthKey, DateTime now) {
-    final nowKey = monthKeyFromDate(DateTime(now.year, now.month));
-    return monthKey.compareTo(nowKey) > 0;
+// ── KPI 卡片 ─────────────────────────────────────────────────
+class _KpiCards extends StatelessWidget {
+  const _KpiCards({
+    required this.totalAssets,
+    required this.monthlyIncome,
+    required this.monthlyExpense,
+  });
+
+  final double totalAssets;
+  final double monthlyIncome;
+  final double monthlyExpense;
+
+  @override
+  Widget build(BuildContext context) {
+    final net = monthlyIncome - monthlyExpense;
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        _KpiCard(label: '总资产', value: formatMoney(totalAssets), color: const Color(0xFF5B9BD5)),
+        _KpiCard(label: '本月收入', value: formatMoney(monthlyIncome), color: const Color(0xFF6AAF8A)),
+        _KpiCard(label: '本月支出', value: formatMoney(monthlyExpense), color: const Color(0xFFE07B7B)),
+        _KpiCard(label: '本月结余', value: formatMoney(net), color: net >= 0 ? const Color(0xFF6AAF8A) : const Color(0xFFE07B7B)),
+      ],
+    );
   }
+}
 
-  Widget _buildChart(
-    BuildContext context, {
-    required ReportViewType viewType,
-    required List<MonthlySummary> summaries,
-    required List<MonthlySummary> rawSummaries,
-    required List<bool> futureMonthFlags,
-    required List<ChartPoint> categoryPoints,
-  }) {
-    switch (viewType) {
-      case ReportViewType.line:
-        return _IncomeExpenseLineChart(
-          summaries: summaries,
-          futureMonthFlags: futureMonthFlags,
-        );
-      case ReportViewType.pie:
-        return SimplePieLegend(
-          points: categoryPoints,
-          amountBuilder: (value) => formatMoney(value),
-        );
-      case ReportViewType.table:
-        return _MonthlyMatrix(
-          summaries: summaries,
-          futureMonthFlags: futureMonthFlags,
-          firstLabel: '收入',
-          secondLabel: '支出',
-          thirdLabel: '结余',
-        );
+class _KpiCard extends StatelessWidget {
+  const _KpiCard({required this.label, required this.value, required this.color});
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: (MediaQuery.of(context).size.width - 42) / 2,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.2), width: 1),
+        boxShadow: [
+          BoxShadow(color: color.withValues(alpha: 0.06), blurRadius: 8, offset: const Offset(0, 2)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: color),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── 月度柱状图 ──────────────────────────────────────────────
+class _MonthlyBarChart extends StatelessWidget {
+  const _MonthlyBarChart({required this.summaries, required this.now});
+
+  final List<MonthlySummary> summaries;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    if (summaries.isEmpty) {
+      return const SizedBox(height: 120, child: Center(child: Text('暂无数据')));
     }
+
+    final maxValue = summaries.fold<double>(
+      0,
+      (max, item) => math.max(max, math.max(item.income, item.expense)),
+    );
+    if (maxValue == 0) {
+      return const SizedBox(height: 120, child: Center(child: Text('暂无数据')));
+    }
+
+    final nowKey = monthKeyFromDate(DateTime(now.year, now.month));
+
+    return SizedBox(
+      height: 200,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: summaries.map((s) {
+          final isFuture = s.monthKey.compareTo(nowKey) > 0;
+          final incomeHeight = (s.income / maxValue) * 160;
+          final expenseHeight = (s.expense / maxValue) * 160;
+          return Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  // 柱子
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Container(
+                        width: 10,
+                        height: incomeHeight,
+                        decoration: BoxDecoration(
+                          color: isFuture
+                              ? const Color(0xFF6AAF8A).withValues(alpha: 0.3)
+                              : const Color(0xFF6AAF8A),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      Container(
+                        width: 10,
+                        height: expenseHeight,
+                        decoration: BoxDecoration(
+                          color: isFuture
+                              ? const Color(0xFFE07B7B).withValues(alpha: 0.3)
+                              : const Color(0xFFE07B7B),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  // 月份标签
+                  Text(
+                    monthLabel(s.monthKey),
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: isFuture ? Colors.grey[400] : Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+// ── 资产分布 ────────────────────────────────────────────────
+class _AssetDistribution extends StatelessWidget {
+  const _AssetDistribution({required this.repository});
+
+  final FinanceRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = repository.totalAssets();
+    if (total == 0) return const Text('暂无资产数据');
+
+    final entries = <_AssetEntry>[];
+    for (final group in ReportGroup.values) {
+      final amount = repository.totalAssetsByGroup(group);
+      if (amount != 0) {
+        entries.add(_AssetEntry(
+          label: _groupLabel(group),
+          amount: amount,
+          pct: (amount / total * 100),
+        ));
+      }
+    }
+
+    return Column(
+      children: entries.map((e) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(e.label, style: const TextStyle(fontSize: 13)),
+              ),
+              Text(formatMoney(e.amount), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+              const SizedBox(width: 8),
+              Text(
+                '${e.pct.toStringAsFixed(1)}%',
+                style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
   }
 
   String _groupLabel(ReportGroup group) {
@@ -308,22 +474,16 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         return '退休';
     }
   }
-
-  Color _palette(String seed) {
-    final colors = [
-      const Color(0xFF0F766E),
-      const Color(0xFF2563EB),
-      const Color(0xFFDC2626),
-      const Color(0xFFD97706),
-      const Color(0xFF7C3AED),
-      const Color(0xFF059669),
-    ];
-    return colors[seed.hashCode.abs() % colors.length];
-  }
 }
 
-// ── AI WebView helper ─────────────────────────────────────────────────
-/// AI 分析结果展示 + 弹窗监听
+class _AssetEntry {
+  final String label;
+  final double amount;
+  final double pct;
+  _AssetEntry({required this.label, required this.amount, required this.pct});
+}
+
+// ── AI 分析 ─────────────────────────────────────────────────
 class _AiResultDisplay extends ConsumerStatefulWidget {
   const _AiResultDisplay();
 
@@ -338,13 +498,13 @@ class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // 如果已分析完成（用户离开期间完成），直接弹窗
       final current = ref.read(aiAnalysisProvider);
-      if (current.completed && current.html != null) {
+      if (current.completed && current.summary != null) {
         ref.read(aiAnalysisProvider.notifier).dismissCompleted();
         _showCompletedDialog();
       }
 
       ref.listen<AiAnalysisState>(aiAnalysisProvider, (prev, next) {
-        if (next.completed && next.html != null) {
+        if (next.completed && next.summary != null) {
           ref.read(aiAnalysisProvider.notifier).dismissCompleted();
           _showCompletedDialog();
         }
@@ -389,50 +549,64 @@ class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
   @override
   Widget build(BuildContext context) {
     final aiState = ref.watch(aiAnalysisProvider);
-    if (aiState.html != null) {
+
+    if (aiState.loading) {
       return Container(
-        margin: const EdgeInsets.only(top: 16, bottom: 12),
+        margin: const EdgeInsets.only(top: 12),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
           color: Theme.of(context).cardColor,
-          border: Border.all(
-            color: Theme.of(context).dividerColor.withValues(alpha: 0.4),
-            width: 0.8,
-          ),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x080F172A),
-              blurRadius: 8,
-              offset: Offset(0, 2),
-            ),
-          ],
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFF5B9BD5).withValues(alpha: 0.2)),
         ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: const Row(
           children: [
-            Padding(
-              padding: const EdgeInsets.only(left: 14, right: 14, top: 14, bottom: 8),
-              child: Text(
-                '🤖 AI 分析报告',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: Theme.of(context).textTheme.bodySmall?.color,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-            // WebView 满宽，高度自适应
-            _AiWebView(html: aiState.html!),
+            SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(width: 12),
+            Text('🤖 AI 正在分析中...', style: TextStyle(fontSize: 13, color: Color(0xFF6B8F7B))),
           ],
         ),
       );
     }
-    return const SizedBox.shrink();
+
+    if (aiState.summary == null) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF5B9BD5).withValues(alpha: 0.2)),
+        boxShadow: const [
+          BoxShadow(color: Color(0x080F172A), blurRadius: 8, offset: Offset(0, 2)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('🤖 AI 分析报告', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => ref.read(aiAnalysisProvider.notifier).state = const AiAnalysisState(),
+                child: Icon(Icons.close, size: 18, color: Colors.grey[400]),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            aiState.summary!,
+            style: const TextStyle(fontSize: 13, height: 1.6, color: Color(0xFF2D4A3E)),
+          ),
+        ],
+      ),
+    );
   }
 }
 
-/// AI 分析按钮，使用全局 provider
+/// AI 分析按钮
 class _AiAnalysisButton extends ConsumerWidget {
   const _AiAnalysisButton();
 
@@ -453,374 +627,11 @@ class _AiAnalysisButton extends ConsumerWidget {
               ref.read(aiAnalysisProvider.notifier).runAnalysis();
             },
       icon: aiState.loading
-          ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.auto_awesome_outlined),
-      label: Text(aiState.loading ? '分析中...' : 'AI 分析'),
-    );
-  }
-}
-
-class _AiWebView extends StatefulWidget {
-  const _AiWebView({required this.html});
-  final String html;
-
-  @override
-  State<_AiWebView> createState() => _AiWebViewState();
-}
-
-class _AiWebViewState extends State<_AiWebView> {
-  late final WebViewController _controller;
-  double _contentHeight = 520; // 初始高度
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel('FlutterHeight', onMessageReceived: (msg) {
-        final h = double.tryParse(msg.message);
-        if (h != null && h > 0 && (h - _contentHeight).abs() > 2) {
-          setState(() => _contentHeight = h);
-        }
-      })
-      ..setNavigationDelegate(NavigationDelegate(
-        onPageFinished: (_) => _injectHeightReporter(),
-      ))
-      ..loadHtmlString(widget.html);
-  }
-
-  void _injectHeightReporter() {
-    _controller.runJavaScript('''
-      (function() {
-        function send() {
-          var h = document.documentElement.scrollHeight || document.body.scrollHeight;
-          FlutterHeight.postMessage(h.toString());
-        }
-        send();
-        // 图片/CSS 加载后再测一次
-        setTimeout(send, 300);
-        setTimeout(send, 800);
-        new MutationObserver(send).observe(document.body, {childList:true, subtree:true});
-      })();
-    ''');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: _contentHeight,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: WebViewWidget(controller: _controller),
-      ),
-    );
-  }
-}
-
-// ── Existing helper widgets ────────────────────────────────────────────
-class _IncomeExpenseLineChart extends StatelessWidget {
-  const _IncomeExpenseLineChart({
-    required this.summaries,
-    required this.futureMonthFlags,
-  });
-
-  final List<MonthlySummary> summaries;
-  final List<bool> futureMonthFlags;
-
-  @override
-  Widget build(BuildContext context) {
-    if (summaries.isEmpty) {
-      return const SizedBox(height: 220, child: Center(child: Text('暂无数据')));
-    }
-
-    final maxValue = summaries.fold<double>(
-      0,
-      (max, item) => math.max(max, math.max(item.income, item.expense)),
-    );
-
-    return SizedBox(
-      height: 280,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            children: [
-              _LegendChip(label: '收入', color: Color(0xFF15803D)),
-              _LegendChip(label: '支出', color: Color(0xFFB91C1C)),
-              _LegendChip(label: '未来月份', color: Color(0xFF94A3B8)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 72,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: List.generate(4, (index) {
-                      final ratio = (3 - index) / 3;
-                      final value = maxValue * ratio;
-                      return Text(
-                        formatMoney(value),
-                        style: Theme.of(context).textTheme.bodySmall,
-                      );
-                    }),
-                  ),
-                ),
-                Expanded(
-                  child: CustomPaint(
-                    painter: _IncomeExpenseLinePainter(
-                      summaries: summaries,
-                      futureMonthFlags: futureMonthFlags,
-                      maxValue: maxValue == 0 ? 1 : maxValue,
-                    ),
-                    child: Container(),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              const SizedBox(width: 72),
-              ...summaries.asMap().entries.map(
-                (entry) => Expanded(
-                  child: Text(
-                    monthLabel(entry.value.monthKey),
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: futureMonthFlags[entry.key]
-                              ? const Color(0xFF64748B)
-                              : null,
-                        ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _IncomeExpenseLinePainter extends CustomPainter {
-  _IncomeExpenseLinePainter({
-    required this.summaries,
-    required this.futureMonthFlags,
-    required this.maxValue,
-  });
-
-  final List<MonthlySummary> summaries;
-  final List<bool> futureMonthFlags;
-  final double maxValue;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final gridPaint = Paint()
-      ..color = const Color(0xFFE2E8F0)
-      ..strokeWidth = 1;
-    final axisPaint = Paint()
-      ..color = const Color(0xFFCBD5E1)
-      ..strokeWidth = 1;
-    const left = 8.0;
-    final width = size.width - left - 12;
-    final height = size.height - 12;
-
-    for (var i = 1; i <= 3; i++) {
-      final y = height - ((height - 12) * (i / 4));
-      canvas.drawLine(Offset(left, y), Offset(size.width, y), gridPaint);
-    }
-    canvas.drawLine(Offset(left, height), Offset(size.width, height), axisPaint);
-    canvas.drawLine(const Offset(left, 0), Offset(left, height), axisPaint);
-
-    _drawSeries(
-      canvas,
-      width: width,
-      height: height,
-      left: left,
-      values: summaries.map((item) => item.income).toList(),
-      baseColor: const Color(0xFF15803D),
-    );
-    _drawSeries(
-      canvas,
-      width: width,
-      height: height,
-      left: left,
-      values: summaries.map((item) => item.expense).toList(),
-      baseColor: const Color(0xFFB91C1C),
-    );
-  }
-
-  void _drawSeries(
-    Canvas canvas, {
-    required double width,
-    required double height,
-    required double left,
-    required List<double> values,
-    required Color baseColor,
-  }) {
-    for (var i = 0; i < values.length - 1; i++) {
-      final startOffset = _pointOffset(i, values[i], width, height, left);
-      final endOffset = _pointOffset(i + 1, values[i + 1], width, height, left);
-      final isFutureSegment = futureMonthFlags[i] || futureMonthFlags[i + 1];
-      final segmentPaint = Paint()
-        ..color = isFutureSegment ? baseColor.withValues(alpha: 0.45) : baseColor
-        ..strokeWidth = 2.5
-        ..style = PaintingStyle.stroke;
-      canvas.drawLine(startOffset, endOffset, segmentPaint);
-    }
-
-    for (var i = 0; i < values.length; i++) {
-      final offset = _pointOffset(i, values[i], width, height, left);
-      final pointPaint = Paint()
-        ..color = futureMonthFlags[i] ? baseColor.withValues(alpha: 0.45) : baseColor;
-      canvas.drawCircle(offset, 3.5, pointPaint);
-    }
-  }
-
-  Offset _pointOffset(int index, double value, double width, double height, double left) {
-    final dx = left + (width * (summaries.length == 1 ? 0 : index / (summaries.length - 1)));
-    final dy = height - ((value / maxValue) * (height - 12));
-    return Offset(dx, dy);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
-
-class _LegendChip extends StatelessWidget {
-  const _LegendChip({
-    required this.label,
-    required this.color,
-  });
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(999),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(label),
-      ],
-    );
-  }
-}
-
-class _MonthlyMatrix extends StatelessWidget {
-  const _MonthlyMatrix({
-    required this.summaries,
-    required this.futureMonthFlags,
-    required this.firstLabel,
-    required this.secondLabel,
-    required this.thirdLabel,
-  });
-
-  final List<MonthlySummary> summaries;
-  final List<bool> futureMonthFlags;
-  final String firstLabel;
-  final String secondLabel;
-  final String thirdLabel;
-
-  @override
-  Widget build(BuildContext context) {
-    if (summaries.isEmpty) {
-      return const Text('暂无数据');
-    }
-
-    return Column(
-      children: [
-        Row(
-          children: [
-            const SizedBox(width: 52),
-            ...summaries.asMap().entries.map(
-              (entry) => Expanded(
-                child: Text(
-                  monthLabel(entry.value.monthKey),
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: futureMonthFlags[entry.key]
-                            ? const Color(0xFF64748B)
-                            : null,
-                      ),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        _MatrixRow(
-          label: firstLabel,
-          values: summaries.map((item) => formatMoney(item.income)).toList(),
-          futureMonthFlags: futureMonthFlags,
-        ),
-        _MatrixRow(
-          label: secondLabel,
-          values: summaries.map((item) => formatMoney(item.expense)).toList(),
-          futureMonthFlags: futureMonthFlags,
-        ),
-        _MatrixRow(
-          label: thirdLabel,
-          values: summaries.map((item) => formatMoney(item.net)).toList(),
-          futureMonthFlags: futureMonthFlags,
-        ),
-      ],
-    );
-  }
-}
-
-class _MatrixRow extends StatelessWidget {
-  const _MatrixRow({
-    required this.label,
-    required this.values,
-    required this.futureMonthFlags,
-  });
-
-  final String label;
-  final List<String> values;
-  final List<bool> futureMonthFlags;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: [
-          SizedBox(width: 52, child: Text(label)),
-          ...values.asMap().entries.map(
-            (entry) => Expanded(
-              child: Text(
-                entry.value,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: futureMonthFlags[entry.key]
-                          ? const Color(0xFF64748B)
-                          : null,
-                    ),
-              ),
-            ),
-          ),
-        ],
+          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.auto_awesome_outlined, size: 18),
+      label: Text(aiState.loading ? '分析中...' : 'AI 分析', style: const TextStyle(fontSize: 13)),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 10),
       ),
     );
   }

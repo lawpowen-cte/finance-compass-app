@@ -7,26 +7,26 @@ import 'repository_provider.dart';
 /// AI 分析状态
 class AiAnalysisState {
   final bool loading;
-  final String? html;
+  final String? summary;
   final String? error;
-  final bool completed; // 已完成但用户还没看
+  final bool completed;
 
   const AiAnalysisState({
     this.loading = false,
-    this.html,
+    this.summary,
     this.error,
     this.completed = false,
   });
 
   AiAnalysisState copyWith({
     bool? loading,
-    String? html,
+    String? summary,
     String? error,
     bool? completed,
   }) {
     return AiAnalysisState(
       loading: loading ?? this.loading,
-      html: html ?? this.html,
+      summary: summary ?? this.summary,
       error: error ?? this.error,
       completed: completed ?? this.completed,
     );
@@ -56,8 +56,8 @@ class AiAnalysisNotifier extends Notifier<AiAnalysisState> {
 
     try {
       final service = AiAnalysisService(gatewayUrl: gatewayUrl);
-      final html = await service.generateAnalysis(repo);
-      state = AiAnalysisState(html: html, completed: true);
+      final summary = await service.generateAnalysis(repo);
+      state = AiAnalysisState(summary: summary, completed: true);
     } catch (e) {
       final msg = e is AiNetworkException ? e.message : 'AI 分析失败：$e';
       state = AiAnalysisState(error: msg);

@@ -36,9 +36,9 @@ class AiAnalysisService {
         }
 
         final result = jsonDecode(response.body);
-        return result['html'] as String;
+        return result['summary'] as String;
       } on TimeoutException {
-        lastError = Exception('请求超时（120秒）');
+        lastError = Exception('请求超时（300秒）');
         if (attempt < maxRetries) {
           await Future.delayed(Duration(seconds: 2 * (attempt + 1)));
         }
@@ -135,16 +135,22 @@ class AiAnalysisService {
       });
     }
 
-    // Recent transactions
-    final recent = repository.recentTransactions(limit: 20);
-    final transactions = recent.map((t) {
-      return {
-        'date': monthKeyFromDate(t.transactionDate),
-        'type': t.type.name,
-        'amount': t.amount,
-        'status': t.status.name,
-      };
-    }).toList();
+    // 近6个月实际收支趋势（用于推演）
+    final recentMonths = <Map<String, dynamic>>[];
+    for (int i = 5; i >= 0; i--) {
+      final mDate = DateTime(now.year, now.month - i);
+      final mKey = monthKeyFromDate(mDate);
+      final mIncome = repository.totalIncomeForMonth(mKey);
+      final mExpense = repository.totalExpenseForMonth(mKey);
+      if (mIncome > 0 || mExpense > 0) {
+        recentMonths.add({
+          'month': mKey,
+          'income': mIncome,
+          'expense': mExpense,
+          'net': mIncome - mExpense,
+        });
+      }
+    }
 
     return {
       'accounts': accounts,
@@ -165,7 +171,7 @@ class AiAnalysisService {
       },
       'budgets': budgets,
       'goals': goals,
-      'recent_transactions': transactions,
+      'recent_months': recentMonths,
     };
   }
 }
