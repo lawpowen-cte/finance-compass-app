@@ -1,10 +1,11 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/data/finance_repository.dart';
-import '../../core/services/ai_analysis_service.dart';
+import '../../core/providers/ai_analysis_provider.dart';
 import '../../core/models/account.dart';
 import '../../core/models/category.dart';
 import '../../core/models/monthly_summary.dart';
@@ -19,21 +20,19 @@ enum ReportViewType { line, pie, table }
 enum ReportRangeType { last3Months, last6Months, last12Months, currentYear }
 enum ReportMeasureMode { monthly, cumulative }
 
-class ReportsScreen extends StatefulWidget {
+class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key, required this.repository});
 
   final FinanceRepository repository;
 
   @override
-  State<ReportsScreen> createState() => _ReportsScreenState();
+  ConsumerState<ReportsScreen> createState() => _ReportsScreenState();
 }
 
-class _ReportsScreenState extends State<ReportsScreen> {
+class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   ReportViewType viewType = ReportViewType.line;
   ReportRangeType rangeType = ReportRangeType.last6Months;
   ReportMeasureMode measureMode = ReportMeasureMode.monthly;
-  String? _aiHtml;
-  bool _aiLoading = false;
 
   @override
   Widget build(BuildContext context) {
@@ -145,76 +144,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
         Row(
           children: [
             Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _aiLoading
-                    ? null
-                    : () async {
-                        final repo = widget.repository;
-                        final gatewayUrl = repo.aiGatewayUrl;
-                        if (gatewayUrl.isEmpty) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('请先在设置中配置 AI 网关地址')),
-                            );
-                          }
-                          return;
-                        }
-                        setState(() {
-                          _aiLoading = true;
-                          _aiHtml = null;
-                        });
-                        try {
-                          final service = AiAnalysisService(
-                            gatewayUrl: gatewayUrl,
-                          );
-                          final html = await service.generateAnalysis(repo);
-                          if (mounted) {
-                            setState(() => _aiHtml = html);
-                          }
-                        } catch (e) {
-                          if (context.mounted) {
-                            final msg = e is AiNetworkException
-                                ? e.message
-                                : 'AI 分析失败：$e';
-                            showDialog(
-                              context: context,
-                              builder: (ctx) => AlertDialog(
-                                title: const Text('AI 分析失败'),
-                                content: Text(msg, style: const TextStyle(fontSize: 14)),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(ctx),
-                                    child: const Text('确定'),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }
-                        } finally {
-                          if (mounted) {
-                            setState(() => _aiLoading = false);
-                          }
-                        }
-                      },
-                icon: _aiLoading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.auto_awesome_outlined),
-                label: const Text('AI 分析'),
-              ),
+              child: _AiAnalysisButton(),
             ),
           ],
         ),
-        if (_aiHtml != null) ...[
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 500,
-            child: _AiWebView(html: _aiHtml!),
-          ),
-        ],
+        _AiResultDisplay(),
         const SizedBox(height: 16),
         SectionCard(
           title: '期间汇总',
@@ -291,24 +225,6 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 );
               }),
             ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        SectionCard(
-          title: 'AI 分析数据',
-          child: SelectableText(
-            '{\n'
-            '  "month": "$currentMonthKey",\n'
-            '  "income": $totalIncome,\n'
-            '  "expense": $totalExpense,\n'
-            '  "net": ${totalIncome - totalExpense},\n'
-            '  "assets_by_group": {\n'
-            '    "cash": ${repository.totalAssetsByGroup(ReportGroup.cash)},\n'
-            '    "credit": ${repository.totalAssetsByGroup(ReportGroup.credit)},\n'
-            '    "investment": ${repository.totalAssetsByGroup(ReportGroup.investment)},\n'
-            '    "retirement": ${repository.totalAssetsByGroup(ReportGroup.retirement)}\n'
-            '  }\n'
-            '}',
           ),
         ),
       ],
@@ -407,6 +323,147 @@ class _ReportsScreenState extends State<ReportsScreen> {
 }
 
 // ── AI WebView helper ─────────────────────────────────────────────────
+/// AI 分析结果展示 + 弹窗监听
+class _AiResultDisplay extends ConsumerStatefulWidget {
+  const _AiResultDisplay();
+
+  @override
+  ConsumerState<_AiResultDisplay> createState() => _AiResultDisplayState();
+}
+
+class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 如果已分析完成（用户离开期间完成），直接弹窗
+      final current = ref.read(aiAnalysisProvider);
+      if (current.completed && current.html != null) {
+        ref.read(aiAnalysisProvider.notifier).dismissCompleted();
+        _showCompletedDialog();
+      }
+
+      ref.listen<AiAnalysisState>(aiAnalysisProvider, (prev, next) {
+        if (next.completed && next.html != null) {
+          ref.read(aiAnalysisProvider.notifier).dismissCompleted();
+          _showCompletedDialog();
+        }
+        if (next.error != null && prev?.error == null) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('❌ AI 分析失败'),
+              content: Text(next.error!, style: const TextStyle(fontSize: 14)),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    ref.read(aiAnalysisProvider.notifier).clearError();
+                  },
+                  child: const Text('确定'),
+                ),
+              ],
+            ),
+          );
+        }
+      });
+    });
+  }
+
+  void _showCompletedDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('✅ 分析完成'),
+        content: const Text('AI 财务分析报告已生成，向下滚动查看。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('查看'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final aiState = ref.watch(aiAnalysisProvider);
+    if (aiState.html != null) {
+      return Container(
+        margin: const EdgeInsets.only(top: 16, bottom: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: Theme.of(context).cardColor,
+          border: Border.all(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.4),
+            width: 0.8,
+          ),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x080F172A),
+              blurRadius: 8,
+              offset: Offset(0, 2),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 14, right: 14, top: 14, bottom: 8),
+              child: Text(
+                '🤖 AI 分析报告',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: Theme.of(context).textTheme.bodySmall?.color,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+            // WebView 满宽，高度自适应
+            _AiWebView(html: aiState.html!),
+          ],
+        ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+}
+
+/// AI 分析按钮，使用全局 provider
+class _AiAnalysisButton extends ConsumerWidget {
+  const _AiAnalysisButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final aiState = ref.watch(aiAnalysisProvider);
+
+    return OutlinedButton.icon(
+      onPressed: aiState.loading
+          ? null
+          : () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('🔄 AI 正在后台分析，完成后会通知你'),
+                  duration: Duration(seconds: 3),
+                ),
+              );
+              ref.read(aiAnalysisProvider.notifier).runAnalysis();
+            },
+      icon: aiState.loading
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.auto_awesome_outlined),
+      label: Text(aiState.loading ? '分析中...' : 'AI 分析'),
+    );
+  }
+}
+
 class _AiWebView extends StatefulWidget {
   const _AiWebView({required this.html});
   final String html;
@@ -417,20 +474,49 @@ class _AiWebView extends StatefulWidget {
 
 class _AiWebViewState extends State<_AiWebView> {
   late final WebViewController _controller;
+  double _contentHeight = 520; // 初始高度
 
   @override
   void initState() {
     super.initState();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel('FlutterHeight', onMessageReceived: (msg) {
+        final h = double.tryParse(msg.message);
+        if (h != null && h > 0 && (h - _contentHeight).abs() > 2) {
+          setState(() => _contentHeight = h);
+        }
+      })
+      ..setNavigationDelegate(NavigationDelegate(
+        onPageFinished: (_) => _injectHeightReporter(),
+      ))
       ..loadHtmlString(widget.html);
+  }
+
+  void _injectHeightReporter() {
+    _controller.runJavaScript('''
+      (function() {
+        function send() {
+          var h = document.documentElement.scrollHeight || document.body.scrollHeight;
+          FlutterHeight.postMessage(h.toString());
+        }
+        send();
+        // 图片/CSS 加载后再测一次
+        setTimeout(send, 300);
+        setTimeout(send, 800);
+        new MutationObserver(send).observe(document.body, {childList:true, subtree:true});
+      })();
+    ''');
   }
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: WebViewWidget(controller: _controller),
+    return SizedBox(
+      height: _contentHeight,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: WebViewWidget(controller: _controller),
+      ),
     );
   }
 }

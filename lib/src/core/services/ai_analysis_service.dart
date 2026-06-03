@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../data/finance_repository.dart';
 import '../models/account.dart';
+import '../models/transaction.dart';
 import '../utils/month_key.dart';
 
 class AiAnalysisService {
@@ -28,7 +29,7 @@ class AiAnalysisService {
               headers: {'Content-Type': 'application/json'},
               body: jsonEncode({'data': data}),
             )
-            .timeout(const Duration(seconds: 120));
+            .timeout(const Duration(seconds: 300));
 
         if (response.statusCode != 200) {
           throw Exception('Gateway 返回 ${response.statusCode}: ${response.body}');
@@ -77,11 +78,36 @@ class AiAnalysisService {
       }
     }
 
-    // Monthly summary
+    // Monthly summary - 分开 actual 和 forecast
     final income = repository.totalIncomeForMonth(currentMonth);
     final expense = repository.totalExpenseForMonth(currentMonth);
     final lastIncome = repository.totalIncomeForMonth(lastMonth);
     final lastExpense = repository.totalExpenseForMonth(lastMonth);
+
+    // 计算 actual only（排除 planned）
+    double actualIncome = 0;
+    double actualExpense = 0;
+    double plannedIncome = 0;
+    double plannedExpense = 0;
+
+    for (final tx in repository.transactions) {
+      final txMonth = monthKeyFromDate(tx.transactionDate);
+      if (txMonth != currentMonth) continue;
+      final isPlanned = tx.status == TransactionStatus.planned;
+      if (tx.type == TransactionType.income) {
+        if (isPlanned) {
+          plannedIncome += tx.amount;
+        } else {
+          actualIncome += tx.amount;
+        }
+      } else if (tx.type == TransactionType.expense) {
+        if (isPlanned) {
+          plannedExpense += tx.amount;
+        } else {
+          actualExpense += tx.amount;
+        }
+      }
+    }
 
     // Budgets
     final budgets = <Map<String, dynamic>>[];
@@ -110,12 +136,13 @@ class AiAnalysisService {
     }
 
     // Recent transactions
-    final recent = repository.recentTransactions(limit: 10);
+    final recent = repository.recentTransactions(limit: 20);
     final transactions = recent.map((t) {
       return {
         'date': monthKeyFromDate(t.transactionDate),
         'type': t.type.name,
         'amount': t.amount,
+        'status': t.status.name,
       };
     }).toList();
 
@@ -125,6 +152,12 @@ class AiAnalysisService {
         'income': income,
         'expense': expense,
         'net': income - expense,
+        'actual_income': actualIncome,
+        'actual_expense': actualExpense,
+        'actual_net': actualIncome - actualExpense,
+        'planned_income': plannedIncome,
+        'planned_expense': plannedExpense,
+        'planned_net': plannedIncome - plannedExpense,
       },
       'last_month': {
         'income': lastIncome,
