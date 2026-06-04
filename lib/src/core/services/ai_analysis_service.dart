@@ -4,8 +4,10 @@ import 'package:http/http.dart' as http;
 
 import '../data/finance_repository.dart';
 import '../models/account.dart';
+import '../models/category.dart';
 import '../models/transaction.dart';
 import '../utils/month_key.dart';
+import '../utils/month_range.dart';
 
 class AiAnalysisService {
   final String gatewayUrl;
@@ -73,6 +75,7 @@ class AiAnalysisService {
     final now = DateTime.now();
     final currentMonth = monthKeyFromDate(now);
     final lastMonth = monthKeyFromDate(DateTime(now.year, now.month - 1));
+    final monthKeys = recentMonthKeys(count: monthCount, anchor: now);
 
     // Account summary (用 base currency)
     final accounts = <Map<String, dynamic>>[];
@@ -100,6 +103,40 @@ class AiAnalysisService {
     // 根据用户选择确定主要数据
     final displayIncome = includePlanned ? income + plannedIncome : income;
     final displayExpense = includePlanned ? expense + plannedExpense : expense;
+
+    // 支出分类明细（近N个月）
+    final expenseByCategory = repository.categoryTotalsForMonths(
+      type: CategoryType.expense,
+      monthKeys: monthKeys,
+    );
+    final expenseCategories = <Map<String, dynamic>>[];
+    for (final entry in expenseByCategory.entries) {
+      if (entry.value > 0) {
+        expenseCategories.add({
+          'name': repository.categoryName(entry.key),
+          'total': entry.value,
+          'monthly_avg': entry.value / monthCount,
+        });
+      }
+    }
+    expenseCategories.sort((a, b) => (b['total'] as double).compareTo(a['total'] as double));
+
+    // 收入分类明细（近N个月）
+    final incomeByCategory = repository.categoryTotalsForMonths(
+      type: CategoryType.income,
+      monthKeys: monthKeys,
+    );
+    final incomeCategories = <Map<String, dynamic>>[];
+    for (final entry in incomeByCategory.entries) {
+      if (entry.value > 0) {
+        incomeCategories.add({
+          'name': repository.categoryName(entry.key),
+          'total': entry.value,
+          'monthly_avg': entry.value / monthCount,
+        });
+      }
+    }
+    incomeCategories.sort((a, b) => (b['total'] as double).compareTo(a['total'] as double));
 
     // Budgets
     final budgets = <Map<String, dynamic>>[];
@@ -164,6 +201,8 @@ class AiAnalysisService {
         'income': lastIncome,
         'expense': lastExpense,
       },
+      'expense_categories': expenseCategories,
+      'income_categories': incomeCategories,
       'budgets': budgets,
       'goals': goals,
       'recent_months': recentMonths,

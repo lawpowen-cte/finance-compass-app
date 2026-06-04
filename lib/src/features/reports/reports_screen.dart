@@ -749,7 +749,7 @@ class _AccountDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
+    final now = repository.currentMonthCutoffDate();
     final rows = <_AccountRow>[];
     for (final group in ReportGroup.values) {
       for (final acc in repository.accountsByGroup(group)) {
