@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-
 import '../../core/providers/repository_provider.dart';
 import '../../core/settings/app_settings_controller.dart';
 import '../../core/theme/finance_theme.dart';
@@ -14,10 +13,7 @@ import '../settings/settings_screen.dart';
 import '../transactions/transactions_screen.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
-  const HomeScreen({
-    super.key,
-    required this.settingsController,
-  });
+  const HomeScreen({super.key, required this.settingsController});
 
   final AppSettingsController settingsController;
 
@@ -78,24 +74,33 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             body: SafeArea(child: screens[selectedIndex]),
             bottomNavigationBar: NavigationBar(
               selectedIndex: selectedIndex,
-              labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
+              labelBehavior:
+                  NavigationDestinationLabelBehavior.onlyShowSelected,
               destinations: const [
                 NavigationDestination(
-                    icon: Icon(Icons.dashboard_outlined), label: ''),
+                  icon: Icon(Icons.dashboard_outlined),
+                  label: '总览',
+                ),
                 NavigationDestination(
                   icon: Icon(Icons.account_balance_wallet_outlined),
-                  label: '',
+                  label: '账户',
                 ),
                 NavigationDestination(
                   icon: Icon(Icons.receipt_long_outlined),
-                  label: '',
+                  label: '交易',
                 ),
                 NavigationDestination(
-                    icon: Icon(Icons.savings_outlined), label: ''),
+                  icon: Icon(Icons.savings_outlined),
+                  label: '预算',
+                ),
                 NavigationDestination(
-                    icon: Icon(Icons.insights_outlined), label: ''),
+                  icon: Icon(Icons.insights_outlined),
+                  label: '报表',
+                ),
                 NavigationDestination(
-                    icon: Icon(Icons.tune_outlined), label: ''),
+                  icon: Icon(Icons.tune_outlined),
+                  label: '设置',
+                ),
               ],
               onDestinationSelected: (index) {
                 setState(() => selectedIndex = index);
