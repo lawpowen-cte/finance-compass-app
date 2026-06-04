@@ -65,6 +65,14 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     final actualExpense = repository.totalExpenseForMonth(currentMonthKey) +
         (includePlanned ? repository.plannedExpenseForMonth(currentMonthKey) : 0);
 
+    // 累计数据（所选时间范围的总和）
+    final cumulativeIncome = rawSummaries.fold<double>(0, (sum, s) => sum + s.income);
+    final cumulativeExpense = rawSummaries.fold<double>(0, (sum, s) => sum + s.expense);
+
+    // KPI 根据模式选择数据
+    final kpiIncome = measureMode == ReportMeasureMode.cumulative ? cumulativeIncome : actualIncome;
+    final kpiExpense = measureMode == ReportMeasureMode.cumulative ? cumulativeExpense : actualExpense;
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -99,7 +107,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
               ),
             ),
             const SizedBox(width: 12),
-            Expanded(child: _AiAnalysisButton()),
+            Expanded(child: _AiAnalysisButton(
+              includePlanned: dataFilterMode == DataFilterMode.all,
+              monthCount: _monthCountForRange(rangeType),
+            )),
           ],
         ),
         _AiResultDisplay(),
@@ -121,8 +132,8 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         // ── KPI 卡片 ──
         _KpiCards(
           totalAssets: repository.totalAssets(),
-          monthlyIncome: actualIncome,
-          monthlyExpense: actualExpense,
+          monthlyIncome: kpiIncome,
+          monthlyExpense: kpiExpense,
           isCumulative: measureMode == ReportMeasureMode.cumulative,
         ),
         const SizedBox(height: 16),
@@ -279,6 +290,19 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
           final date = DateTime(now.year, index + 1);
           return monthKeyFromDate(date);
         });
+    }
+  }
+
+  int _monthCountForRange(ReportRangeType rangeType) {
+    switch (rangeType) {
+      case ReportRangeType.last3Months:
+        return 3;
+      case ReportRangeType.last6Months:
+        return 6;
+      case ReportRangeType.last12Months:
+        return 12;
+      case ReportRangeType.currentYear:
+        return 12;
     }
   }
 
@@ -729,7 +753,7 @@ class _AccountDetails extends StatelessWidget {
     final rows = <_AccountRow>[];
     for (final group in ReportGroup.values) {
       for (final acc in repository.accountsByGroup(group)) {
-        final balance = repository.accountBalanceAt(acc.id, now);
+        final balance = repository.accountBalanceAtBase(acc.id, now);
         rows.add(_AccountRow(
           name: acc.name,
           typeLabel: _accountTypeLabel(acc.accountType),
@@ -939,7 +963,10 @@ class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
 
 /// AI 分析按钮
 class _AiAnalysisButton extends ConsumerWidget {
-  const _AiAnalysisButton();
+  const _AiAnalysisButton({required this.includePlanned, required this.monthCount});
+
+  final bool includePlanned;
+  final int monthCount;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -950,12 +977,17 @@ class _AiAnalysisButton extends ConsumerWidget {
           ? null
           : () {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('🔄 AI 正在后台分析，完成后会通知你'),
-                  duration: Duration(seconds: 3),
+                SnackBar(
+                  content: Text(includePlanned
+                      ? '🔄 AI 正在分析全部数据（含预计），完成后会通知你'
+                      : '🔄 AI 正在分析已发生数据，完成后会通知你'),
+                  duration: const Duration(seconds: 3),
                 ),
               );
-              ref.read(aiAnalysisProvider.notifier).runAnalysis();
+              ref.read(aiAnalysisProvider.notifier).runAnalysis(
+                includePlanned: includePlanned,
+                monthCount: monthCount,
+              );
             },
       icon: aiState.loading
           ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))

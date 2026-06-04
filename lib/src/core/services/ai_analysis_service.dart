@@ -14,8 +14,13 @@ class AiAnalysisService {
     required this.gatewayUrl,
   });
 
-  Future<String> generateAnalysis(FinanceRepository repository) async {
-    final data = _buildRequestData(repository);
+  Future<String> generateAnalysis(
+    FinanceRepository repository, {
+    bool includePlanned = false,
+    int monthCount = 6,
+  }) async {
+    final data = _buildRequestData(repository,
+        includePlanned: includePlanned, monthCount: monthCount);
     final uri = Uri.parse('$gatewayUrl/api/analyze');
 
     const maxRetries = 2;
@@ -60,16 +65,20 @@ class AiAnalysisService {
     );
   }
 
-  Map<String, dynamic> _buildRequestData(FinanceRepository repository) {
+  Map<String, dynamic> _buildRequestData(
+    FinanceRepository repository, {
+    required bool includePlanned,
+    required int monthCount,
+  }) {
     final now = DateTime.now();
     final currentMonth = monthKeyFromDate(now);
     final lastMonth = monthKeyFromDate(DateTime(now.year, now.month - 1));
 
-    // Account summary
+    // Account summary (用 base currency)
     final accounts = <Map<String, dynamic>>[];
     for (final group in ReportGroup.values) {
       for (final acc in repository.accountsByGroup(group)) {
-        final balance = repository.accountBalanceAt(acc.id, now);
+        final balance = repository.accountBalanceAtBase(acc.id, now);
         accounts.add({
           'name': acc.name,
           'type': acc.accountType.name,
@@ -78,36 +87,19 @@ class AiAnalysisService {
       }
     }
 
-    // Monthly summary - 分开 actual 和 forecast
+    // Monthly summary
     final income = repository.totalIncomeForMonth(currentMonth);
     final expense = repository.totalExpenseForMonth(currentMonth);
     final lastIncome = repository.totalIncomeForMonth(lastMonth);
     final lastExpense = repository.totalExpenseForMonth(lastMonth);
 
-    // 计算 actual only（排除 planned）
-    double actualIncome = 0;
-    double actualExpense = 0;
-    double plannedIncome = 0;
-    double plannedExpense = 0;
+    // 计算 actual 和 planned
+    final plannedIncome = repository.plannedIncomeForMonth(currentMonth);
+    final plannedExpense = repository.plannedExpenseForMonth(currentMonth);
 
-    for (final tx in repository.transactions) {
-      final txMonth = monthKeyFromDate(tx.transactionDate);
-      if (txMonth != currentMonth) continue;
-      final isPlanned = tx.status == TransactionStatus.planned;
-      if (tx.type == TransactionType.income) {
-        if (isPlanned) {
-          plannedIncome += tx.amount;
-        } else {
-          actualIncome += tx.amount;
-        }
-      } else if (tx.type == TransactionType.expense) {
-        if (isPlanned) {
-          plannedExpense += tx.amount;
-        } else {
-          actualExpense += tx.amount;
-        }
-      }
-    }
+    // 根据用户选择确定主要数据
+    final displayIncome = includePlanned ? income + plannedIncome : income;
+    final displayExpense = includePlanned ? expense + plannedExpense : expense;
 
     // Budgets
     final budgets = <Map<String, dynamic>>[];
@@ -135,13 +127,15 @@ class AiAnalysisService {
       });
     }
 
-    // 近6个月实际收支趋势（用于推演）
+    // 近N个月趋势（根据 includePlanned 决定用哪种数据）
     final recentMonths = <Map<String, dynamic>>[];
-    for (int i = 5; i >= 0; i--) {
+    for (int i = monthCount - 1; i >= 0; i--) {
       final mDate = DateTime(now.year, now.month - i);
       final mKey = monthKeyFromDate(mDate);
-      final mIncome = repository.totalIncomeForMonth(mKey);
-      final mExpense = repository.totalExpenseForMonth(mKey);
+      final mIncome = repository.totalIncomeForMonth(mKey) +
+          (includePlanned ? repository.plannedIncomeForMonth(mKey) : 0);
+      final mExpense = repository.totalExpenseForMonth(mKey) +
+          (includePlanned ? repository.plannedExpenseForMonth(mKey) : 0);
       if (mIncome > 0 || mExpense > 0) {
         recentMonths.add({
           'month': mKey,
@@ -152,42 +146,19 @@ class AiAnalysisService {
       }
     }
 
-    // 近6个月含预计收支趋势（actual + planned）
-    final recentMonthsAll = <Map<String, dynamic>>[];
-    for (int i = 5; i >= 0; i--) {
-      final mDate = DateTime(now.year, now.month - i);
-      final mKey = monthKeyFromDate(mDate);
-      final mIncomeAll = repository.totalIncomeForMonth(mKey) +
-          repository.plannedIncomeForMonth(mKey);
-      final mExpenseAll = repository.totalExpenseForMonth(mKey) +
-          repository.plannedExpenseForMonth(mKey);
-      if (mIncomeAll > 0 || mExpenseAll > 0) {
-        recentMonthsAll.add({
-          'month': mKey,
-          'income': mIncomeAll,
-          'expense': mExpenseAll,
-          'net': mIncomeAll - mExpenseAll,
-        });
-      }
-    }
-
     return {
+      'data_mode': includePlanned ? 'all' : 'actual',
+      'month_count': monthCount,
       'accounts': accounts,
       'current_month': {
-        'income': income,
-        'expense': expense,
-        'net': income - expense,
-        'actual_income': actualIncome,
-        'actual_expense': actualExpense,
-        'actual_net': actualIncome - actualExpense,
+        'income': displayIncome,
+        'expense': displayExpense,
+        'net': displayIncome - displayExpense,
+        'actual_income': income,
+        'actual_expense': expense,
+        'actual_net': income - expense,
         'planned_income': plannedIncome,
         'planned_expense': plannedExpense,
-        'planned_net': plannedIncome - plannedExpense,
-      },
-      'current_month_all': {
-        'income': actualIncome + plannedIncome,
-        'expense': actualExpense + plannedExpense,
-        'net': (actualIncome + plannedIncome) - (actualExpense + plannedExpense),
       },
       'last_month': {
         'income': lastIncome,
@@ -196,7 +167,6 @@ class AiAnalysisService {
       'budgets': budgets,
       'goals': goals,
       'recent_months': recentMonths,
-      'recent_months_all': recentMonthsAll,
     };
   }
 }

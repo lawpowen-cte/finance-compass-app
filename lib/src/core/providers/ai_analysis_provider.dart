@@ -38,7 +38,10 @@ class AiAnalysisNotifier extends Notifier<AiAnalysisState> {
   @override
   AiAnalysisState build() => const AiAnalysisState();
 
-  Future<void> runAnalysis() async {
+  Future<void> runAnalysis({
+    bool includePlanned = false,
+    int monthCount = 6,
+  }) async {
     final repoAsync = ref.read(financeRepositoryProvider);
     final repo = repoAsync.value;
     if (repo == null) return;
@@ -56,7 +59,11 @@ class AiAnalysisNotifier extends Notifier<AiAnalysisState> {
 
     try {
       final service = AiAnalysisService(gatewayUrl: gatewayUrl);
-      final summary = await service.generateAnalysis(repo);
+      final summary = await service.generateAnalysis(
+        repo,
+        includePlanned: includePlanned,
+        monthCount: monthCount,
+      );
       state = AiAnalysisState(summary: summary, completed: true);
     } catch (e) {
       final msg = e is AiNetworkException ? e.message : 'AI 分析失败：$e';
