@@ -16,6 +16,7 @@ import '../shared/section_card.dart';
 
 enum ReportRangeType { last3Months, last6Months, last12Months, currentYear }
 enum ReportMeasureMode { monthly, cumulative }
+enum DataFilterMode { actual, all }
 
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key, required this.repository});
@@ -29,6 +30,7 @@ class ReportsScreen extends ConsumerStatefulWidget {
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   ReportRangeType rangeType = ReportRangeType.last6Months;
   ReportMeasureMode measureMode = ReportMeasureMode.monthly;
+  DataFilterMode dataFilterMode = DataFilterMode.actual;
 
   @override
   Widget build(BuildContext context) {
@@ -36,12 +38,16 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     final now = DateTime.now();
     final currentMonthKey = monthKeyFromDate(now);
     final monthKeys = _monthKeysForRange(rangeType, now);
+    final includePlanned = dataFilterMode == DataFilterMode.all;
+
     final rawSummaries = monthKeys
         .map(
           (monthKey) => MonthlySummary(
             monthKey: monthKey,
-            income: repository.totalIncomeForMonth(monthKey),
-            expense: repository.totalExpenseForMonth(monthKey),
+            income: repository.totalIncomeForMonth(monthKey) +
+                (includePlanned ? repository.plannedIncomeForMonth(monthKey) : 0),
+            expense: repository.totalExpenseForMonth(monthKey) +
+                (includePlanned ? repository.plannedExpenseForMonth(monthKey) : 0),
           ),
         )
         .toList();
@@ -53,9 +59,11 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     final activeBudgets = repository.activeBudgetsForMonth(budgetMonth);
     final goalSummaries = repository.assetGoalSummaries();
 
-    // 本月实际数据
-    final actualIncome = repository.totalIncomeForMonth(currentMonthKey);
-    final actualExpense = repository.totalExpenseForMonth(currentMonthKey);
+    // 本月实际数据 (or actual+planned)
+    final actualIncome = repository.totalIncomeForMonth(currentMonthKey) +
+        (includePlanned ? repository.plannedIncomeForMonth(currentMonthKey) : 0);
+    final actualExpense = repository.totalExpenseForMonth(currentMonthKey) +
+        (includePlanned ? repository.plannedExpenseForMonth(currentMonthKey) : 0);
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -97,11 +105,25 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         _AiResultDisplay(),
         const SizedBox(height: 16),
 
+        // ── 已发生 / 全部(含预计) toggle ──
+        SegmentedButton<DataFilterMode>(
+          segments: const [
+            ButtonSegment(value: DataFilterMode.actual, label: Text('已发生')),
+            ButtonSegment(value: DataFilterMode.all, label: Text('全部(含预计)')),
+          ],
+          selected: {dataFilterMode},
+          onSelectionChanged: (selection) {
+            setState(() => dataFilterMode = selection.first);
+          },
+        ),
+        const SizedBox(height: 16),
+
         // ── KPI 卡片 ──
         _KpiCards(
           totalAssets: repository.totalAssets(),
           monthlyIncome: actualIncome,
           monthlyExpense: actualExpense,
+          isCumulative: measureMode == ReportMeasureMode.cumulative,
         ),
         const SizedBox(height: 16),
 
@@ -171,10 +193,17 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         ),
         const SizedBox(height: 16),
 
-        // ── 资产分布 ──
+        // ── 资产分布 (饼图) ──
         SectionCard(
           title: '💰 资产分布',
-          child: _AssetDistribution(repository: repository),
+          child: _AssetDistributionPieChart(repository: repository),
+        ),
+        const SizedBox(height: 16),
+
+        // ── 账户明细 ──
+        SectionCard(
+          title: '🏦 账户明细',
+          child: _AccountDetails(repository: repository),
         ),
         const SizedBox(height: 16),
 
@@ -274,23 +303,26 @@ class _KpiCards extends StatelessWidget {
     required this.totalAssets,
     required this.monthlyIncome,
     required this.monthlyExpense,
+    required this.isCumulative,
   });
 
   final double totalAssets;
   final double monthlyIncome;
   final double monthlyExpense;
+  final bool isCumulative;
 
   @override
   Widget build(BuildContext context) {
     final net = monthlyIncome - monthlyExpense;
+    final prefix = isCumulative ? '累计' : '本月';
     return Wrap(
       spacing: 10,
       runSpacing: 10,
       children: [
         _KpiCard(label: '总资产', value: formatMoney(totalAssets), color: const Color(0xFF5B9BD5)),
-        _KpiCard(label: '本月收入', value: formatMoney(monthlyIncome), color: const Color(0xFF6AAF8A)),
-        _KpiCard(label: '本月支出', value: formatMoney(monthlyExpense), color: const Color(0xFFE07B7B)),
-        _KpiCard(label: '本月结余', value: formatMoney(net), color: net >= 0 ? const Color(0xFF6AAF8A) : const Color(0xFFE07B7B)),
+        _KpiCard(label: '${prefix}收入', value: formatMoney(monthlyIncome), color: const Color(0xFF6AAF8A)),
+        _KpiCard(label: '${prefix}支出', value: formatMoney(monthlyExpense), color: const Color(0xFFE07B7B)),
+        _KpiCard(label: '${prefix}结余', value: formatMoney(net), color: net >= 0 ? const Color(0xFF6AAF8A) : const Color(0xFFE07B7B)),
       ],
     );
   }
@@ -333,12 +365,17 @@ class _KpiCard extends StatelessWidget {
   }
 }
 
-// ── 月度柱状图 ──────────────────────────────────────────────
+// ── 月度柱状图 (带 Y 轴) ──────────────────────────────────────
 class _MonthlyBarChart extends StatelessWidget {
   const _MonthlyBarChart({required this.summaries, required this.now});
 
   final List<MonthlySummary> summaries;
   final DateTime now;
+
+  static const double _yAxisWidth = 36;
+  static const double _chartHeight = 200;
+  static const double _topPadding = 12;
+  static const double _bottomLabelHeight = 22;
 
   @override
   Widget build(BuildContext context) {
@@ -351,77 +388,207 @@ class _MonthlyBarChart extends StatelessWidget {
       (max, item) => math.max(max, math.max(item.income, item.expense)),
     );
     if (maxValue == 0) {
-      return const SizedBox(height: 120, child: Center(child: Text('暂无数据')));
+      return SizedBox(
+        height: _chartHeight,
+        child: const Center(child: Text('暂无数据')),
+      );
     }
 
     final nowKey = monthKeyFromDate(DateTime(now.year, now.month));
+    // Round up maxValue to a nice number for axis labels
+    final niceMax = _niceMaxValue(maxValue);
+    final axisLabels = _axisLabels(niceMax);
 
     return SizedBox(
-      height: 200,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: summaries.map((s) {
-          final isFuture = s.monthKey.compareTo(nowKey) > 0;
-          final incomeHeight = (s.income / maxValue) * 160;
-          final expenseHeight = (s.expense / maxValue) * 160;
-          return Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  // 柱子
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+      height: _chartHeight + _topPadding,
+      child: Column(
+        children: [
+          // Legend
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(width: 10, height: 10, decoration: BoxDecoration(
+                  color: const Color(0xFF6AAF8A),
+                  borderRadius: BorderRadius.circular(2),
+                )),
+                const SizedBox(width: 4),
+                Text('收入', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                const SizedBox(width: 16),
+                Container(width: 10, height: 10, decoration: BoxDecoration(
+                  color: const Color(0xFFE07B7B),
+                  borderRadius: BorderRadius.circular(2),
+                )),
+                const SizedBox(width: 4),
+                Text('支出', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Y-axis labels
+                SizedBox(
+                  width: _yAxisWidth,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     crossAxisAlignment: CrossAxisAlignment.end,
+                    children: axisLabels.reversed.map((label) {
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: Text(
+                          label,
+                          style: TextStyle(fontSize: 9, color: Colors.grey[500]),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+                // Vertical axis line
+                Container(
+                  width: 1,
+                  color: Colors.grey[300],
+                ),
+                // Bars area
+                Expanded(
+                  child: Stack(
                     children: [
-                      Container(
-                        width: 10,
-                        height: incomeHeight,
-                        decoration: BoxDecoration(
-                          color: isFuture
-                              ? const Color(0xFF6AAF8A).withValues(alpha: 0.3)
-                              : const Color(0xFF6AAF8A),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(width: 2),
-                      Container(
-                        width: 10,
-                        height: expenseHeight,
-                        decoration: BoxDecoration(
-                          color: isFuture
-                              ? const Color(0xFFE07B7B).withValues(alpha: 0.3)
-                              : const Color(0xFFE07B7B),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
+                      // Grid lines
+                      ...axisLabels.asMap().entries.map((entry) {
+                        final ratio = entry.key / (axisLabels.length - 1);
+                        return Positioned(
+                          left: 0,
+                          right: 0,
+                          top: ratio * (_chartHeight - _bottomLabelHeight),
+                          child: Container(
+                            height: entry.key == axisLabels.length - 1 ? 1 : 0.5,
+                            color: entry.key == axisLabels.length - 1
+                                ? Colors.grey[300]
+                                : Colors.grey[100],
+                          ),
+                        );
+                      }),
+                      // Bars
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: summaries.map((s) {
+                          final isFuture = s.monthKey.compareTo(nowKey) > 0;
+                          final barAreaHeight = _chartHeight - _bottomLabelHeight;
+                          final incomeHeight = (s.income / niceMax) * barAreaHeight;
+                          final expenseHeight = (s.expense / niceMax) * barAreaHeight;
+                          return Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 2),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Container(
+                                        width: 10,
+                                        height: incomeHeight,
+                                        decoration: BoxDecoration(
+                                          color: isFuture
+                                              ? const Color(0xFF6AAF8A).withValues(alpha: 0.3)
+                                              : const Color(0xFF6AAF8A),
+                                          borderRadius: BorderRadius.circular(2),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 2),
+                                      Container(
+                                        width: 10,
+                                        height: expenseHeight,
+                                        decoration: BoxDecoration(
+                                          color: isFuture
+                                              ? const Color(0xFFE07B7B).withValues(alpha: 0.3)
+                                              : const Color(0xFFE07B7B),
+                                          borderRadius: BorderRadius.circular(2),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  SizedBox(
+                                    height: _bottomLabelHeight,
+                                    child: Center(
+                                      child: Text(
+                                        monthLabel(s.monthKey),
+                                        style: TextStyle(
+                                          fontSize: 9,
+                                          color: isFuture ? Colors.grey[400] : Colors.grey[600],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  // 月份标签
-                  Text(
-                    monthLabel(s.monthKey),
-                    style: TextStyle(
-                      fontSize: 9,
-                      color: isFuture ? Colors.grey[400] : Colors.grey[600],
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-          );
-        }).toList(),
+          ),
+        ],
       ),
     );
   }
+
+  double _niceMaxValue(double value) {
+    if (value <= 0) return 1;
+    final magnitude = math.pow(10, (math.log(value) / math.ln10).floor()).toDouble();
+    final normalized = value / magnitude;
+    double niceNormalized;
+    if (normalized <= 1.0) {
+      niceNormalized = 1.0;
+    } else if (normalized <= 2.0) {
+      niceNormalized = 2.0;
+    } else if (normalized <= 5.0) {
+      niceNormalized = 5.0;
+    } else {
+      niceNormalized = 10.0;
+    }
+    return niceNormalized * magnitude;
+  }
+
+  List<String> _axisLabels(double maxValue) {
+    const count = 5;
+    return List.generate(count, (i) {
+      final value = maxValue * i / (count - 1);
+      return _formatAxisValue(value);
+    });
+  }
+
+  String _formatAxisValue(double value) {
+    if (value >= 10000) {
+      return '${(value / 10000).toStringAsFixed(value % 10000 == 0 ? 0 : 1)}万';
+    } else if (value >= 1000) {
+      return '${(value / 1000).toStringAsFixed(value % 1000 == 0 ? 0 : 1)}K';
+    } else if (value > 0) {
+      return value.toStringAsFixed(0);
+    }
+    return '0';
+  }
 }
 
-// ── 资产分布 ────────────────────────────────────────────────
-class _AssetDistribution extends StatelessWidget {
-  const _AssetDistribution({required this.repository});
+// ── 资产分布 (饼图) ──────────────────────────────────────────
+class _AssetDistributionPieChart extends StatelessWidget {
+  const _AssetDistributionPieChart({required this.repository});
 
   final FinanceRepository repository;
+
+  static const _groupColors = <ReportGroup, Color>{
+    ReportGroup.cash: Color(0xFF5B9BD5),
+    ReportGroup.credit: Color(0xFFE07B7B),
+    ReportGroup.investment: Color(0xFF6AAF8A),
+    ReportGroup.retirement: Color(0xFFE8A838),
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -436,29 +603,67 @@ class _AssetDistribution extends StatelessWidget {
           label: _groupLabel(group),
           amount: amount,
           pct: (amount / total * 100),
+          color: _groupColors[group]!,
         ));
       }
     }
 
-    return Column(
-      children: entries.map((e) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(e.label, style: const TextStyle(fontSize: 13)),
-              ),
-              Text(formatMoney(e.amount), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-              const SizedBox(width: 8),
-              Text(
-                '${e.pct.toStringAsFixed(1)}%',
-                style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-              ),
-            ],
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Pie chart
+        SizedBox(
+          width: 140,
+          height: 140,
+          child: CustomPaint(
+            painter: _PieChartPainter(entries: entries),
           ),
-        );
-      }).toList(),
+        ),
+        const SizedBox(width: 20),
+        // Legend
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: entries.map((e) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: e.color,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        e.label,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          formatMoney(e.amount),
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                        ),
+                        Text(
+                          '${e.pct.toStringAsFixed(1)}%',
+                          style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      ],
     );
   }
 
@@ -476,11 +681,137 @@ class _AssetDistribution extends StatelessWidget {
   }
 }
 
+class _PieChartPainter extends CustomPainter {
+  _PieChartPainter({required this.entries});
+
+  final List<_AssetEntry> entries;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = math.min(size.width, size.height) / 2;
+    final rect = Rect.fromCircle(center: center, radius: radius);
+
+    var startAngle = -math.pi / 2; // Start from top
+    for (final entry in entries) {
+      final sweepAngle = (entry.pct / 100) * 2 * math.pi;
+      final paint = Paint()
+        ..style = PaintingStyle.fill
+        ..color = entry.color;
+      canvas.drawArc(rect, startAngle, sweepAngle, true, paint);
+      startAngle += sweepAngle;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PieChartPainter oldDelegate) {
+    return oldDelegate.entries != entries;
+  }
+}
+
 class _AssetEntry {
   final String label;
   final double amount;
   final double pct;
-  _AssetEntry({required this.label, required this.amount, required this.pct});
+  final Color color;
+  _AssetEntry({required this.label, required this.amount, required this.pct, required this.color});
+}
+
+// ── 账户明细 ─────────────────────────────────────────────────
+class _AccountDetails extends StatelessWidget {
+  const _AccountDetails({required this.repository});
+
+  final FinanceRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final rows = <_AccountRow>[];
+    for (final group in ReportGroup.values) {
+      for (final acc in repository.accountsByGroup(group)) {
+        final balance = repository.accountBalanceAt(acc.id, now);
+        rows.add(_AccountRow(
+          name: acc.name,
+          typeLabel: _accountTypeLabel(acc.accountType),
+          balance: balance,
+        ));
+      }
+    }
+
+    if (rows.isEmpty) {
+      return const Text('暂无账户数据', style: TextStyle(color: Colors.grey));
+    }
+
+    return Column(
+      children: rows.map((row) {
+        final isNegative = row.balance < 0;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  row.name,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  row.typeLabel,
+                  style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                ),
+              ),
+              Text(
+                formatMoney(row.balance),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: isNegative ? const Color(0xFFE07B7B) : const Color(0xFF6AAF8A),
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  String _accountTypeLabel(AccountType type) {
+    switch (type) {
+      case AccountType.cash:
+        return '现金';
+      case AccountType.bankSaving:
+        return '储蓄';
+      case AccountType.eWallet:
+        return '电子钱包';
+      case AccountType.creditCard:
+        return '信用卡';
+      case AccountType.moneyMarketFund:
+        return '货币基金';
+      case AccountType.pension:
+        return '养老金';
+      case AccountType.stock:
+        return '股票';
+      case AccountType.crypto:
+        return '加密货币';
+      case AccountType.trading:
+        return '交易';
+      case AccountType.fund:
+        return '基金';
+      case AccountType.other:
+        return '其他';
+    }
+  }
+}
+
+class _AccountRow {
+  final String name;
+  final String typeLabel;
+  final double balance;
+  _AccountRow({required this.name, required this.typeLabel, required this.balance});
 }
 
 // ── AI 分析 ─────────────────────────────────────────────────

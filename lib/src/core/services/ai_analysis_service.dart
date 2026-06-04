@@ -152,6 +152,25 @@ class AiAnalysisService {
       }
     }
 
+    // 近6个月含预计收支趋势（actual + planned）
+    final recentMonthsAll = <Map<String, dynamic>>[];
+    for (int i = 5; i >= 0; i--) {
+      final mDate = DateTime(now.year, now.month - i);
+      final mKey = monthKeyFromDate(mDate);
+      final mIncomeAll = repository.totalIncomeForMonth(mKey) +
+          repository.plannedIncomeForMonth(mKey);
+      final mExpenseAll = repository.totalExpenseForMonth(mKey) +
+          repository.plannedExpenseForMonth(mKey);
+      if (mIncomeAll > 0 || mExpenseAll > 0) {
+        recentMonthsAll.add({
+          'month': mKey,
+          'income': mIncomeAll,
+          'expense': mExpenseAll,
+          'net': mIncomeAll - mExpenseAll,
+        });
+      }
+    }
+
     return {
       'accounts': accounts,
       'current_month': {
@@ -165,6 +184,11 @@ class AiAnalysisService {
         'planned_expense': plannedExpense,
         'planned_net': plannedIncome - plannedExpense,
       },
+      'current_month_all': {
+        'income': actualIncome + plannedIncome,
+        'expense': actualExpense + plannedExpense,
+        'net': (actualIncome + plannedIncome) - (actualExpense + plannedExpense),
+      },
       'last_month': {
         'income': lastIncome,
         'expense': lastExpense,
@@ -172,6 +196,7 @@ class AiAnalysisService {
       'budgets': budgets,
       'goals': goals,
       'recent_months': recentMonths,
+      'recent_months_all': recentMonthsAll,
     };
   }
 }

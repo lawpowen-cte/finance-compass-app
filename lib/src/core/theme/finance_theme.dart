@@ -161,14 +161,106 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         income: incomeColor,
         expense: expenseColor,
       );
+    case AppThemeStyle.night:
+      return const FinanceThemePalette(
+        seed: Color(0xFF4A6FA5),
+        background: Color(0xFF0A0A0A),
+        backgroundTop: Color(0xFF101418),
+        backgroundBottom: Color(0xFF080808),
+        surface: Color(0xFF1A1F2E),
+        surfaceAlt: Color(0xFF141820),
+        border: Color(0xFF2A2F3E),
+        cardTint: Color(0xFF141820),
+        cardBorderStrong: Color(0xFF2A2F3E),
+        textPrimary: Color(0xFFE8E8E8),
+        textMuted: Color(0xFFA0A0A0),
+        gradient: [Color(0x4D4A6FA5), Color(0x1A4A6FA5)],
+        income: Color(0xFF7BC89A),
+        expense: Color(0xFFE8AAAA),
+      );
+    case AppThemeStyle.abyss:
+      return const FinanceThemePalette(
+        seed: Color(0xFF388BFD),
+        background: Color(0xFF0D1117),
+        backgroundTop: Color(0xFF121820),
+        backgroundBottom: Color(0xFF0A0E14),
+        surface: Color(0xFF1C2128),
+        surfaceAlt: Color(0xFF161B22),
+        border: Color(0xFF30363D),
+        cardTint: Color(0xFF161B22),
+        cardBorderStrong: Color(0xFF30363D),
+        textPrimary: Color(0xFFE6EDF3),
+        textMuted: Color(0xFFA0A0A0),
+        gradient: [Color(0x4D388BFD), Color(0x1A388BFD)],
+        income: Color(0xFF7BC89A),
+        expense: Color(0xFFE8AAAA),
+      );
+    case AppThemeStyle.graphite:
+      return const FinanceThemePalette(
+        seed: Color(0xFF888888),
+        background: Color(0xFF1A1A1A),
+        backgroundTop: Color(0xFF202020),
+        backgroundBottom: Color(0xFF161616),
+        surface: Color(0xFF2A2A2A),
+        surfaceAlt: Color(0xFF242424),
+        border: Color(0xFF383838),
+        cardTint: Color(0xFF242424),
+        cardBorderStrong: Color(0xFF383838),
+        textPrimary: Color(0xFFE0E0E0),
+        textMuted: Color(0xFFA0A0A0),
+        gradient: [Color(0x4D888888), Color(0x1A888888)],
+        income: Color(0xFF7BC89A),
+        expense: Color(0xFFE8AAAA),
+      );
+    case AppThemeStyle.darkGreen:
+      return const FinanceThemePalette(
+        seed: Color(0xFF4A8B6E),
+        background: Color(0xFF0D1210),
+        backgroundTop: Color(0xFF121816),
+        backgroundBottom: Color(0xFF0A0E0C),
+        surface: Color(0xFF1A2420),
+        surfaceAlt: Color(0xFF151C18),
+        border: Color(0xFF2A3830),
+        cardTint: Color(0xFF151C18),
+        cardBorderStrong: Color(0xFF2A3830),
+        textPrimary: Color(0xFFE0E8E4),
+        textMuted: Color(0xFFA0A8A4),
+        gradient: [Color(0x4D4A8B6E), Color(0x1A4A8B6E)],
+        income: Color(0xFF7BC89A),
+        expense: Color(0xFFE8AAAA),
+      );
+    case AppThemeStyle.darkWood:
+      return const FinanceThemePalette(
+        seed: Color(0xFFA08060),
+        background: Color(0xFF141010),
+        backgroundTop: Color(0xFF1A1614),
+        backgroundBottom: Color(0xFF100E0C),
+        surface: Color(0xFF241E1A),
+        surfaceAlt: Color(0xFF1E1814),
+        border: Color(0xFF382E28),
+        cardTint: Color(0xFF1E1814),
+        cardBorderStrong: Color(0xFF382E28),
+        textPrimary: Color(0xFFE8E0D8),
+        textMuted: Color(0xFFA8A098),
+        gradient: [Color(0x4DA08060), Color(0x1AA08060)],
+        income: Color(0xFF7BC89A),
+        expense: Color(0xFFE8AAAA),
+      );
   }
 }
 
 ThemeData buildFinanceTheme(AppThemeStyle style) {
   final palette = paletteForStyle(style);
+  final isDark = {
+    AppThemeStyle.night,
+    AppThemeStyle.abyss,
+    AppThemeStyle.graphite,
+    AppThemeStyle.darkGreen,
+    AppThemeStyle.darkWood,
+  }.contains(style);
   final colorScheme = ColorScheme.fromSeed(
     seedColor: palette.seed,
-    brightness: Brightness.light,
+    brightness: isDark ? Brightness.dark : Brightness.light,
   );
 
   return ThemeData(
@@ -260,7 +352,7 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         backgroundColor: palette.seed,
-        foregroundColor: Colors.white,
+        foregroundColor: isDark ? Colors.white : Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         elevation: 0,
@@ -299,8 +391,12 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
     ),
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
-      backgroundColor: palette.textPrimary.withValues(alpha: 0.88),
-      contentTextStyle: const TextStyle(color: Colors.white),
+      backgroundColor: isDark
+          ? palette.surfaceAlt.withValues(alpha: 0.95)
+          : palette.textPrimary.withValues(alpha: 0.88),
+      contentTextStyle: TextStyle(
+        color: isDark ? palette.textPrimary : Colors.white,
+      ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
     ),
   );

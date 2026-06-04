@@ -387,19 +387,92 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             const SizedBox(height: 16),
             SectionCard(
               title: '主题风格',
-              child: Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: AppThemeStyle.values.map((style) {
-                  final selected =
-                      style == widget.settingsController.themeStyle;
-                  return _ThemePreviewChip(
-                    style: style,
-                    label: _themeLabel(style),
-                    selected: selected,
-                    onTap: () => widget.settingsController.setThemeStyle(style),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final chipWidth =
+                      (constraints.maxWidth - 10 * 2) / 3;
+                  final lightThemes = [
+                    AppThemeStyle.tide,
+                    AppThemeStyle.ocean,
+                    AppThemeStyle.sky,
+                    AppThemeStyle.ember,
+                    AppThemeStyle.forest,
+                    AppThemeStyle.dune,
+                    AppThemeStyle.aurora,
+                  ];
+                  final darkThemes = [
+                    AppThemeStyle.night,
+                    AppThemeStyle.abyss,
+                    AppThemeStyle.graphite,
+                    AppThemeStyle.darkGreen,
+                    AppThemeStyle.darkWood,
+                  ];
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: lightThemes.map((style) {
+                          final selected =
+                              style == widget.settingsController.themeStyle;
+                          return SizedBox(
+                            width: chipWidth,
+                            child: _ThemePreviewChip(
+                              style: style,
+                              label: _themeLabel(style),
+                              selected: selected,
+                              onTap: () => widget.settingsController
+                                  .setThemeStyle(style),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: Row(
+                          children: [
+                            const Expanded(child: Divider()),
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              child: Text(
+                                '暗色主题',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelSmall
+                                    ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
+                              ),
+                            ),
+                            const Expanded(child: Divider()),
+                          ],
+                        ),
+                      ),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: darkThemes.map((style) {
+                          final selected =
+                              style == widget.settingsController.themeStyle;
+                          return SizedBox(
+                            width: chipWidth,
+                            child: _ThemePreviewChip(
+                              style: style,
+                              label: _themeLabel(style),
+                              selected: selected,
+                              onTap: () => widget.settingsController
+                                  .setThemeStyle(style),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
                   );
-                }).toList(),
+                },
               ),
             ),
             const SizedBox(height: 16),
@@ -604,6 +677,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return '沙丘';
       case AppThemeStyle.aurora:
         return '极光';
+      case AppThemeStyle.night:
+        return '夜空';
+      case AppThemeStyle.abyss:
+        return '深海';
+      case AppThemeStyle.graphite:
+        return '石墨';
+      case AppThemeStyle.darkGreen:
+        return '墨绿';
+      case AppThemeStyle.darkWood:
+        return '沉木';
     }
   }
 }

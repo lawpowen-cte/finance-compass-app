@@ -6,4 +6,9 @@ enum AppThemeStyle {
   forest,
   dune,
   aurora,
+  night,
+  abyss,
+  graphite,
+  darkGreen,
+  darkWood,
 }
