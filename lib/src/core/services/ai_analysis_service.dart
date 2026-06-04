@@ -184,6 +184,7 @@ class AiAnalysisService {
     }
 
     return {
+      'base_currency': repository.baseCurrency,
       'data_mode': includePlanned ? 'all' : 'actual',
       'month_count': monthCount,
       'accounts': accounts,
