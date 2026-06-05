@@ -13,25 +13,38 @@ void main() {
   const gatewayUrl = 'http://localhost:5000';
   const jsonPath =
       '/home/pwlaw/.hermes/cache/documents/doc_c5f1fd11e5c2_finance_compass.json';
+  var integrationReady = false;
+  String? skipReason;
 
   group('AI Analysis 网关集成测试', () {
     setUpAll(() async {
       // 检查网关
       try {
         final resp = await http.get(Uri.parse('$gatewayUrl/health'));
-        expect(resp.statusCode, 200);
+        if (resp.statusCode != 200) {
+          skipReason = '网关健康检查失败: HTTP ${resp.statusCode}';
+          return;
+        }
         print('✅ 网关健康检查通过: ${resp.body}');
       } catch (e) {
-        fail('无法连接网关 $gatewayUrl: $e');
+        skipReason = '无法连接网关 $gatewayUrl: $e';
+        return;
       }
 
       // 检查 JSON 文件
       if (!File(jsonPath).existsSync()) {
-        fail('JSON 文件不存在: $jsonPath');
+        skipReason = 'JSON 文件不存在: $jsonPath';
+        return;
       }
+      integrationReady = true;
     });
 
     test('导入 JSON → 模拟 App 构建请求 → 调用网关 → 返回 HTML', () async {
+      if (!integrationReady) {
+        markTestSkipped(skipReason ?? 'AI 网关集成测试环境未就绪');
+        return;
+      }
+
       // ====== Step 1: 读取并解析 JSON（模拟 App importJsonSnapshot） ======
       print('\n📦 Step 1: 读取 JSON 文件...');
       final raw = await File(jsonPath).readAsString();

@@ -15,7 +15,6 @@ import '../../core/settings/app_settings_controller.dart';
 import '../../core/settings/app_theme_style.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/currency_formatter.dart';
-import '../../core/utils/month_key.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 
@@ -211,44 +210,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     });
   }
 
-  Future<void> _exportCsv({
-    required String fileName,
-    required Future<Uint8List> Function() bytesBuilder,
-    required String successLabel,
-  }) async {
-    await _runBusyTask(() async {
-      final bytes = await bytesBuilder();
-      if (bytes.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('导出内容为空，未保存文件。')),
-          );
-        }
-        return;
-      }
-
-      final savedPath = await FileSaver.instance.saveAs(
-        name: fileName,
-        bytes: bytes,
-        fileExtension: 'csv',
-        mimeType: MimeType.custom,
-        customMimeType: 'text/csv',
-      );
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            savedPath == null || savedPath.trim().isEmpty
-                ? '没有完成保存。'
-                : '$successLabel\n$savedPath\n大小 ${bytes.length} bytes',
-          ),
-        ),
-      );
-    });
-  }
-
   Future<void> _pickAndImportJson() async {
     await _runBusyTask(() async {
       final result = await FilePicker.platform.pickFiles(
@@ -317,38 +278,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('导入完成')),
-        );
-      }
-    });
-  }
-
-  Future<void> _loadExampleData() async {
-    final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('写入示例资料'),
-            content: const Text('这会覆盖当前资料，并写入示例数据。'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('确认'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-    if (!confirmed || !mounted) {
-      return;
-    }
-    await _runBusyTask(() async {
-      await ref.read(exportMutationsProvider.notifier).loadExampleData();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('示例资料已写入。')),
         );
       }
     });
@@ -539,7 +468,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             const SizedBox(height: 16),
             SectionCard(
               title: '数据管理',
-              subtitle: '备份、迁移和示例数据',
+              subtitle: '备份与迁移',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -564,49 +493,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                   const Divider(height: 24),
                   _SettingsActionRow(
-                    icon: Icons.auto_awesome_outlined,
-                    title: 'AI 摘要',
-                    subtitle: '只导出当前月份汇总，便于给 AI 分析使用',
-                    action: OutlinedButton.icon(
-                      onPressed: _isBusy
-                          ? null
-                          : () => _exportJson(
-                                fileName: 'finance_compass_ai_summary',
-                                bytesBuilder: () => ref
-                                    .read(exportMutationsProvider.notifier)
-                                    .exportAiSummaryBytes(
-                                  monthKeys: [
-                                    monthKeyFromDate(DateTime.now()),
-                                  ],
-                                ),
-                                successLabel: 'AI 摘要已保存到',
-                                openAfterSave: true,
-                              ),
-                      icon: const Icon(Icons.file_download_outlined),
-                      label: const Text('导出摘要'),
-                    ),
-                  ),
-                  const Divider(height: 24),
-                  _SettingsActionRow(
-                    icon: Icons.table_chart_outlined,
-                    title: '未来规划',
-                    subtitle: '导出预计交易和现金流规划 CSV',
-                    action: OutlinedButton.icon(
-                      onPressed: _isBusy
-                          ? null
-                          : () => _exportCsv(
-                                fileName: 'finance_compass_future_planning',
-                                bytesBuilder: () => ref
-                                    .read(exportMutationsProvider.notifier)
-                                    .exportFuturePlanningCsvBytes(),
-                                successLabel: '未来规划表已保存到',
-                              ),
-                      icon: const Icon(Icons.download_outlined),
-                      label: const Text('导出 CSV'),
-                    ),
-                  ),
-                  const Divider(height: 24),
-                  _SettingsActionRow(
                     icon: Icons.upload_file_outlined,
                     title: '资料导入',
                     subtitle: '从完整 JSON 备份恢复，会覆盖当前资料',
@@ -614,17 +500,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       onPressed: _isBusy ? null : _pickAndImportJson,
                       icon: const Icon(Icons.upload_file_outlined),
                       label: const Text('导入 JSON'),
-                    ),
-                  ),
-                  const Divider(height: 24),
-                  _SettingsActionRow(
-                    icon: Icons.science_outlined,
-                    title: '示例资料',
-                    subtitle: '写入一套示例账户和交易，用于演示与测试',
-                    action: OutlinedButton.icon(
-                      onPressed: _isBusy ? null : _loadExampleData,
-                      icon: const Icon(Icons.science_outlined),
-                      label: const Text('写入示例'),
                     ),
                   ),
                 ],
