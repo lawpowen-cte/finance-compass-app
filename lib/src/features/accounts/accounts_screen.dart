@@ -107,13 +107,13 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
           runSpacing: 12,
           children: [
             _SummaryChip(
-              label: '总资产',
+              label: '净资产',
               value: formatMoney(
                 repository.displayTotalAssets(cutoffDate: displayCutoff),
               ),
             ),
             _SummaryChip(
-              label: '净资产',
+              label: '总资产',
               value: formatMoney(
                 repository.displayTotalAssets(
                   includeCredit: false,
@@ -127,7 +127,7 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
         SectionCard(
           title: '资产目标',
           subtitle:
-              goalSummaries.isEmpty ? '设定目标后会自动记录首次达成日期。' : '支持同时追踪多个总资产目标。',
+              goalSummaries.isEmpty ? '设定目标后会自动记录首次达成日期。' : '支持同时追踪多个净资产目标。',
           child: goalSummaries.isEmpty
               ? Align(
                   alignment: Alignment.centerLeft,
@@ -814,7 +814,7 @@ class _GoalCard extends StatelessWidget {
                   value: formatMoney(summary.goal.targetAmount),
                 ),
                 _MetricChip(
-                  label: '当前总资产',
+                  label: '当前净资产',
                   value: formatMoney(summary.currentAssets),
                 ),
                 _MetricChip(

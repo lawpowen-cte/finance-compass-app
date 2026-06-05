@@ -91,6 +91,7 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
               ),
               const SizedBox(height: 14),
               FinanceMetricGrid(
+                fixedColumns: 2,
                 maxColumns: 2,
                 minItemWidth: 168,
                 children: [

@@ -142,11 +142,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
         .where((item) => item.type == TransactionType.expense)
         .fold<double>(
             0, (sum, item) => sum + repository.transactionAmountInBase(item));
-    final allAdjustment = filteredTransactions
-        .where((item) => item.type == TransactionType.adjustment)
-        .fold<double>(
-            0, (sum, item) => sum + repository.transactionAmountInBase(item));
-    final netAssetChange = allIncome - allExpense + allAdjustment;
+    final projectedNetCashFlow = allIncome - allExpense;
     final activeFilters = _activeFilters(
       repository: repository,
       accountId: effectiveAccountId,
@@ -505,8 +501,8 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
               ),
               FinanceMetricCard(
                 label: '净现金流（含预计）',
-                value: formatMoney(netAssetChange),
-                color: netAssetChange >= 0
+                value: formatMoney(projectedNetCashFlow),
+                color: projectedNetCashFlow >= 0
                     ? const Color(0xFF15803D)
                     : const Color(0xFFB91C1C),
               ),

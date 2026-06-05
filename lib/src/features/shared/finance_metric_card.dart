@@ -19,12 +19,14 @@ class FinanceMetricGrid extends StatelessWidget {
     this.gap = 12,
     this.minItemWidth = 168,
     this.maxColumns = 4,
+    this.fixedColumns,
   });
 
   final List<Widget> children;
   final double gap;
   final double minItemWidth;
   final int maxColumns;
+  final int? fixedColumns;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +35,7 @@ class FinanceMetricGrid extends StatelessWidget {
         final availableWidth = constraints.maxWidth;
         final estimatedColumns =
             ((availableWidth + gap) / (minItemWidth + gap)).floor();
-        final columns = estimatedColumns.clamp(1, maxColumns);
+        final columns = fixedColumns ?? estimatedColumns.clamp(1, maxColumns);
         final itemWidth = (availableWidth - gap * (columns - 1)) / columns;
         return Wrap(
           spacing: gap,

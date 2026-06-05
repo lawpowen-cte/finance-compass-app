@@ -191,8 +191,9 @@ class ReportService {
             expense += delta.abs();
             break;
           case TransactionType.transfer:
-          case TransactionType.adjustment:
             transfers += delta;
+            break;
+          case TransactionType.adjustment:
             break;
         }
       }
@@ -328,8 +329,7 @@ class ReportService {
         return deltaFor(
             transaction.accountId, -transaction.amount, transaction.currency);
       case TransactionType.adjustment:
-        return deltaFor(
-            transaction.accountId, transaction.amount, transaction.currency);
+        return 0;
       case TransactionType.transfer:
         var delta = deltaFor(
             transaction.accountId, -transaction.amount, transaction.currency);

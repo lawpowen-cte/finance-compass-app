@@ -279,7 +279,7 @@ class FinanceRepository {
     return [
       AssetGoal(
         id: 'goal_legacy',
-        name: '总资产目标',
+        name: '净资产目标',
         targetAmount: legacyAmount,
         reachedAt: legacyReachedAtRaw == null
             ? null
@@ -321,7 +321,7 @@ class FinanceRepository {
 
   double totalTargetAssets() {
     return displayTotalAssets(
-      includeCredit: false,
+      includeCredit: true,
       cutoffDate: currentMonthCutoffDate(),
     );
   }
@@ -361,7 +361,7 @@ class FinanceRepository {
       return AssetGoalHistoryPoint(
         date: date,
         label: monthKey,
-        totalAssets: totalAssetsAt(date, includeCredit: false),
+        totalAssets: totalAssetsAt(date),
       );
     }).toList();
   }
@@ -371,7 +371,7 @@ class FinanceRepository {
   }) {
     final targetCutoff = cutoffDate ?? currentMonthCutoffDate();
     final history = totalAssetHistory(cutoffDate: targetCutoff);
-    final currentAssets = totalAssetsAt(targetCutoff, includeCredit: false);
+    final currentAssets = totalAssetsAt(targetCutoff);
     final summaries = assetGoals.map((goal) {
       AssetGoalHistoryPoint? reachedPoint;
       for (final point in history) {
@@ -869,8 +869,9 @@ class FinanceRepository {
             expense += delta.abs();
             break;
           case TransactionType.transfer:
-          case TransactionType.adjustment:
             transfers += delta;
+            break;
+          case TransactionType.adjustment:
             break;
         }
       }
@@ -2109,8 +2110,7 @@ class FinanceRepository {
         return deltaFor(
             transaction.accountId, -transaction.amount, transaction.currency);
       case TransactionType.adjustment:
-        return deltaFor(
-            transaction.accountId, transaction.amount, transaction.currency);
+        return 0;
       case TransactionType.transfer:
         var delta = deltaFor(
             transaction.accountId, -transaction.amount, transaction.currency);
@@ -2220,8 +2220,7 @@ class FinanceRepository {
   }
 
   // ── AI analysis config ──────────────────────────────────────────────
-  String get aiGatewayUrl =>
-      _metaValues['ai_gateway_url'] ?? '';
+  String get aiGatewayUrl => _metaValues['ai_gateway_url'] ?? '';
 
   Future<void> saveAiGatewayUrl(String gatewayUrl) async {
     await database.setMetaValue('ai_gateway_url', gatewayUrl);

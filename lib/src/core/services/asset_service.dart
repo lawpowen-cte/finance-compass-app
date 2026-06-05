@@ -1,8 +1,7 @@
 import 'dart:convert';
 
 import '../data/finance_repository.dart';
-import '../database/app_database.dart'
-    hide Account, AssetSnapshot;
+import '../database/app_database.dart' hide Account, AssetSnapshot;
 import '../models/account.dart';
 import '../models/asset_snapshot.dart';
 import '../models/transaction.dart';
@@ -274,7 +273,7 @@ class AssetService {
     return [
       AssetGoal(
         id: 'goal_legacy',
-        name: '总资产目标',
+        name: '净资产目标',
         targetAmount: legacyAmount,
         reachedAt: legacyReachedAtRaw == null
             ? null
@@ -283,7 +282,7 @@ class AssetService {
     ];
   }
 
-  /// 总资产历史走势（按月）。
+  /// 净资产历史走势（按月）。
   List<AssetGoalHistoryPoint> totalAssetHistory({
     DateTime? cutoffDate,
   }) {
@@ -319,7 +318,7 @@ class AssetService {
       return AssetGoalHistoryPoint(
         date: date,
         label: monthKey,
-        totalAssets: _totalAssetsAt(date, includeCredit: false),
+        totalAssets: _totalAssetsAt(date),
       );
     }).toList();
   }
@@ -330,7 +329,7 @@ class AssetService {
   }) {
     final targetCutoff = cutoffDate ?? _currentMonthCutoffDate();
     final history = totalAssetHistory(cutoffDate: targetCutoff);
-    final currentAssets = _totalAssetsAt(targetCutoff, includeCredit: false);
+    final currentAssets = _totalAssetsAt(targetCutoff);
     final summaries = assetGoals.map((goal) {
       AssetGoalHistoryPoint? reachedPoint;
       for (final point in history) {
@@ -412,19 +411,20 @@ class AssetService {
       await database.deleteMetaValue('asset_goal_reached_at');
       return;
     }
-    final syncedGoals = assetGoalSummaries(cutoffDate: _currentMonthCutoffDate())
-        .map(
-          (summary) => summary.goal.copyWith(
-            reachedAt: summary.reachedAt == null
-                ? null
-                : DateTime(
-                    summary.reachedAt!.year,
-                    summary.reachedAt!.month,
-                    summary.reachedAt!.day,
-                  ),
-          ),
-        )
-        .toList();
+    final syncedGoals =
+        assetGoalSummaries(cutoffDate: _currentMonthCutoffDate())
+            .map(
+              (summary) => summary.goal.copyWith(
+                reachedAt: summary.reachedAt == null
+                    ? null
+                    : DateTime(
+                        summary.reachedAt!.year,
+                        summary.reachedAt!.month,
+                        summary.reachedAt!.day,
+                      ),
+              ),
+            )
+            .toList();
     await _saveAssetGoals(syncedGoals);
     await database.deleteMetaValue('asset_goal_amount');
     await database.deleteMetaValue('asset_goal_reached_at');
@@ -440,7 +440,7 @@ class AssetService {
   }
 
   double _totalTargetAssets(DateTime cutoffDate) {
-    return _totalAssetsAt(cutoffDate, includeCredit: false);
+    return _totalAssetsAt(cutoffDate);
   }
 
   double _totalAssetsAt(DateTime date, {bool includeCredit = true}) {

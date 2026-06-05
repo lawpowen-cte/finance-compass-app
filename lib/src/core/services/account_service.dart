@@ -1,6 +1,5 @@
 import '../data/finance_repository.dart';
-import '../database/app_database.dart'
-    hide Account, AssetSnapshot;
+import '../database/app_database.dart' hide Account, AssetSnapshot;
 import '../models/account.dart';
 import '../models/asset_snapshot.dart';
 import '../models/transaction.dart';
@@ -102,10 +101,10 @@ class AccountService {
                 sum + accountBalanceAtBase(account.id, targetDate));
   }
 
-  /// 目标资产（排除信用卡）。
+  /// 目标资产（包含信用卡/负债后的净资产）。
   double totalTargetAssets() {
     return displayTotalAssets(
-      includeCredit: false,
+      includeCredit: true,
       cutoffDate: currentMonthCutoffDate(),
     );
   }
@@ -159,9 +158,10 @@ class AccountService {
     DateTime cutoffDate,
   ) {
     final account = _accounts.firstWhere((item) => item.id == accountId);
-    final accountSnapshots =
-        _snapshots.where((s) => s.accountId == accountId).toList()
-          ..sort((a, b) => a.snapshotDate.compareTo(b.snapshotDate));
+    final accountSnapshots = _snapshots
+        .where((s) => s.accountId == accountId)
+        .toList()
+      ..sort((a, b) => a.snapshotDate.compareTo(b.snapshotDate));
 
     AssetSnapshot? latestSnapshotBeforeDate;
     for (final snapshot in accountSnapshots) {
@@ -222,7 +222,6 @@ class AccountService {
 
   /// 获取账户最近对账月份。
   String? reconciledMonthForAccount(String accountId) {
-
     // 由调用方（Repository）从 metaValues 中读取
     return null; // 实际由 Repository 层代理
   }
@@ -268,9 +267,10 @@ class AccountService {
   /// 优先使用最近快照，然后叠加其后交易影响；
   /// 若无快照，则从当前余额反向扣除。
   double _accountBalanceAt(Account account, DateTime date) {
-    final accountSnapshots =
-        _snapshots.where((s) => s.accountId == account.id).toList()
-          ..sort((a, b) => a.snapshotDate.compareTo(b.snapshotDate));
+    final accountSnapshots = _snapshots
+        .where((s) => s.accountId == account.id)
+        .toList()
+      ..sort((a, b) => a.snapshotDate.compareTo(b.snapshotDate));
 
     AssetSnapshot? latestSnapshotBeforeDate;
     for (final snapshot in accountSnapshots) {

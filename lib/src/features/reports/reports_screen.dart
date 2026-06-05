@@ -514,7 +514,7 @@ class _KpiCards extends StatelessWidget {
     final prefix = isCumulative ? '累计' : '本月';
     final cards = [
       FinanceMetricCard(
-        label: '总资产',
+        label: '净资产',
         value: formatMoney(totalAssets),
         color: const Color(0xFF5B9BD5),
         padding: const EdgeInsets.all(14),
