@@ -8,6 +8,8 @@ import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/mutations/asset_mutations.dart';
 
 import '../../core/utils/currency_formatter.dart';
+import '../shared/finance_action_menu_button.dart';
+import '../shared/finance_status_chip.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 import '../shared/simple_charts.dart';
@@ -269,14 +271,16 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                                           Theme.of(context).textTheme.bodySmall,
                                     ),
                                     const SizedBox(height: 6),
-                                    _StatusPill(
+                                    FinanceStatusChip(
                                       icon: isReconciledForCutoff
                                           ? Icons.verified_outlined
                                           : Icons.pending_actions_outlined,
                                       label: reconciledMonth == null
                                           ? '未对账'
                                           : '已对账到 $reconciledMonth',
-                                      isPositive: isReconciledForCutoff,
+                                      color: isReconciledForCutoff
+                                          ? const Color(0xFF047857)
+                                          : const Color(0xFFB45309),
                                     ),
                                   ],
                                 ),
@@ -301,8 +305,32 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                                     style:
                                         Theme.of(context).textTheme.labelSmall,
                                   ),
-                                  PopupMenuButton<String>(
-                                    padding: EdgeInsets.zero,
+                                  FinanceActionMenuButton<String>(
+                                    tooltip: '账户操作',
+                                    items: const [
+                                      FinanceActionMenuItem(
+                                        value: 'trace',
+                                        label: '数字追溯',
+                                        icon: Icons.manage_search_outlined,
+                                      ),
+                                      FinanceActionMenuItem(
+                                        value: 'reconcile',
+                                        label: '标记已对账',
+                                        icon: Icons.verified_outlined,
+                                      ),
+                                      FinanceActionMenuItem(
+                                        value: 'edit',
+                                        label: '编辑',
+                                        icon: Icons.edit_outlined,
+                                        dividerBefore: true,
+                                      ),
+                                      FinanceActionMenuItem(
+                                        value: 'delete',
+                                        label: '删除',
+                                        icon: Icons.delete_outline,
+                                        destructive: true,
+                                      ),
+                                    ],
                                     onSelected: (value) => _handleAccountAction(
                                       context,
                                       value,
@@ -310,21 +338,6 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                                       effectiveCutoffMonth,
                                       displayCutoff,
                                     ),
-                                    itemBuilder: (_) => const [
-                                      PopupMenuItem(
-                                        value: 'trace',
-                                        child: Text('数字追溯'),
-                                      ),
-                                      PopupMenuItem(
-                                        value: 'reconcile',
-                                        child: Text('标记已对账'),
-                                      ),
-                                      PopupMenuDivider(),
-                                      PopupMenuItem(
-                                          value: 'edit', child: Text('编辑')),
-                                      PopupMenuItem(
-                                          value: 'delete', child: Text('删除')),
-                                    ],
                                   ),
                                 ],
                               ),
@@ -501,8 +514,7 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
     await ref.read(assetMutationsProvider.notifier).addSnapshot(result);
   }
 
-  Future<void> _showEditAccount(
-      BuildContext context, Account account) async {
+  Future<void> _showEditAccount(BuildContext context, Account account) async {
     final result = await showDialog<Account>(
       context: context,
       builder: (_) => AccountFormDialog(initialAccount: account),
@@ -704,9 +716,7 @@ class _GoalStatusLine extends StatelessWidget {
   Widget build(BuildContext context) {
     if (summary.isReached) {
       final date = summary.reachedAt;
-      final dateStr = date == null
-          ? ''
-          : '${date.year}年${date.month}月';
+      final dateStr = date == null ? '' : '${date.year}年${date.month}月';
       return Text(
         '🎉 已达成 $dateStr',
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -721,9 +731,8 @@ class _GoalStatusLine extends StatelessWidget {
     final history = summary.history;
     String estimate = '';
     if (history.length >= 2) {
-      final recent = history.length > 3
-          ? history.sublist(history.length - 3)
-          : history;
+      final recent =
+          history.length > 3 ? history.sublist(history.length - 3) : history;
       final firstVal = recent.first.totalAssets;
       final lastVal = recent.last.totalAssets;
       final months = recent.length - 1;
@@ -837,49 +846,6 @@ class _GoalDraft {
 
   final String name;
   final double? amount;
-}
-
-class _StatusPill extends StatelessWidget {
-  const _StatusPill({
-    required this.icon,
-    required this.label,
-    required this.isPositive,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool isPositive;
-
-  @override
-  Widget build(BuildContext context) {
-    final color =
-        isPositive ? const Color(0xFF15803D) : const Color(0xFFB45309);
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: color.withValues(alpha: 0.18)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: color),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: color,
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _TraceSummaryRow extends StatelessWidget {

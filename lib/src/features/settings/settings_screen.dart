@@ -30,6 +30,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
   @override
   ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
+
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isBusy = false;
   final _rateControllers = <String, TextEditingController>{};
@@ -108,7 +109,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       nextRates[currency] = rate;
     }
     await _runBusyTask(() async {
-      await ref.read(accountMutationsProvider.notifier).updateExchangeRates(nextRates, _currencyOrder);
+      await ref
+          .read(accountMutationsProvider.notifier)
+          .updateExchangeRates(nextRates, _currencyOrder);
       if (!mounted) {
         return;
       }
@@ -258,7 +261,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return;
       }
 
-      final preview = await ref.read(exportMutationsProvider.notifier).previewImport(path);
+      final preview =
+          await ref.read(exportMutationsProvider.notifier).previewImport(path);
       if (!mounted) {
         return;
       }
@@ -383,14 +387,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const ScreenHeader(title: '设置'),
+            const ScreenHeader(
+              title: '设置',
+              subtitle: '外观、币种、备份与 AI 网关集中管理',
+            ),
             const SizedBox(height: 16),
             SectionCard(
-              title: '主题风格',
+              title: '外观',
+              subtitle: '选择界面主题风格',
               child: LayoutBuilder(
                 builder: (context, constraints) {
+                  final columns = constraints.maxWidth >= 640
+                      ? 4
+                      : constraints.maxWidth < 360
+                          ? 2
+                          : 3;
                   final chipWidth =
-                      (constraints.maxWidth - 10 * 2) / 3;
+                      (constraints.maxWidth - 10 * (columns - 1)) / columns;
                   final lightThemes = [
                     AppThemeStyle.tide,
                     AppThemeStyle.ocean,
@@ -410,6 +423,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      const _SettingsSubsectionLabel('浅色主题'),
+                      const SizedBox(height: 8),
                       Wrap(
                         spacing: 10,
                         runSpacing: 10,
@@ -428,30 +443,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           );
                         }).toList(),
                       ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Row(
-                          children: [
-                            const Expanded(child: Divider()),
-                            Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 12),
-                              child: Text(
-                                '暗色主题',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelSmall
-                                    ?.copyWith(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant,
-                                    ),
-                              ),
-                            ),
-                            const Expanded(child: Divider()),
-                          ],
-                        ),
-                      ),
+                      const SizedBox(height: 16),
+                      const _SettingsSubsectionLabel('暗色主题'),
+                      const SizedBox(height: 8),
                       Wrap(
                         spacing: 10,
                         runSpacing: 10,
@@ -477,7 +471,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             const SizedBox(height: 16),
             SectionCard(
-              title: '汇率优先级',
+              title: '货币与汇率',
               subtitle: '拖动排序：第一个是主币种，第二个是提示用的次币种。',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -544,82 +538,102 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             const SizedBox(height: 16),
             SectionCard(
-              title: '资料导出',
+              title: '数据管理',
+              subtitle: '备份、迁移和示例数据',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      FilledButton.icon(
-                        onPressed: _isBusy
-                            ? null
-                            : () => _exportJson(
-                                  fileName: 'finance_compass_export',
-                                  bytesBuilder: () => ref.read(exportMutationsProvider.notifier).exportJsonBytes(),
-                                  successLabel: 'JSON 已保存到',
-                                  validateBytes: _validateFullJsonExport,
-                                ),
-                        icon: const Icon(Icons.download_outlined),
-                        label: const Text('导出 JSON'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: _isBusy
-                            ? null
-                            : () => _exportJson(
-                                  fileName: 'finance_compass_ai_summary',
-                                  bytesBuilder: () => ref.read(exportMutationsProvider.notifier).exportAiSummaryBytes(monthKeys: [monthKeyFromDate(DateTime.now())]),
-                                  successLabel: 'AI 摘要已保存到',
-                                  openAfterSave: true,
-                                ),
-                        icon: const Icon(Icons.auto_awesome_outlined),
-                        label: const Text('导出 AI 摘要'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: _isBusy
-                            ? null
-                            : () => _exportCsv(
-                                  fileName: 'finance_compass_future_planning',
-                                  bytesBuilder:
-                                      () => ref.read(exportMutationsProvider.notifier).exportFuturePlanningCsvBytes(),
-                                  successLabel: '未来规划表已保存到',
-                                ),
-                        icon: const Icon(Icons.table_chart_outlined),
-                        label: const Text('导出未来规划表'),
-                      ),
-                    ],
+                  _SettingsActionRow(
+                    icon: Icons.archive_outlined,
+                    title: '完整备份',
+                    subtitle: '账户、类别、预算、交易、快照和应用元资料',
+                    action: FilledButton.icon(
+                      onPressed: _isBusy
+                          ? null
+                          : () => _exportJson(
+                                fileName: 'finance_compass_export',
+                                bytesBuilder: () => ref
+                                    .read(exportMutationsProvider.notifier)
+                                    .exportJsonBytes(),
+                                successLabel: 'JSON 已保存到',
+                                validateBytes: _validateFullJsonExport,
+                              ),
+                      icon: const Icon(Icons.download_outlined),
+                      label: const Text('导出 JSON'),
+                    ),
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    '完整 JSON 包含账户、类别、预算、交易、快照和应用元资料；AI 摘要只保留汇总数据。',
-                    style: Theme.of(context).textTheme.bodySmall,
+                  const Divider(height: 24),
+                  _SettingsActionRow(
+                    icon: Icons.auto_awesome_outlined,
+                    title: 'AI 摘要',
+                    subtitle: '只导出当前月份汇总，便于给 AI 分析使用',
+                    action: OutlinedButton.icon(
+                      onPressed: _isBusy
+                          ? null
+                          : () => _exportJson(
+                                fileName: 'finance_compass_ai_summary',
+                                bytesBuilder: () => ref
+                                    .read(exportMutationsProvider.notifier)
+                                    .exportAiSummaryBytes(
+                                  monthKeys: [
+                                    monthKeyFromDate(DateTime.now()),
+                                  ],
+                                ),
+                                successLabel: 'AI 摘要已保存到',
+                                openAfterSave: true,
+                              ),
+                      icon: const Icon(Icons.file_download_outlined),
+                      label: const Text('导出摘要'),
+                    ),
+                  ),
+                  const Divider(height: 24),
+                  _SettingsActionRow(
+                    icon: Icons.table_chart_outlined,
+                    title: '未来规划',
+                    subtitle: '导出预计交易和现金流规划 CSV',
+                    action: OutlinedButton.icon(
+                      onPressed: _isBusy
+                          ? null
+                          : () => _exportCsv(
+                                fileName: 'finance_compass_future_planning',
+                                bytesBuilder: () => ref
+                                    .read(exportMutationsProvider.notifier)
+                                    .exportFuturePlanningCsvBytes(),
+                                successLabel: '未来规划表已保存到',
+                              ),
+                      icon: const Icon(Icons.download_outlined),
+                      label: const Text('导出 CSV'),
+                    ),
+                  ),
+                  const Divider(height: 24),
+                  _SettingsActionRow(
+                    icon: Icons.upload_file_outlined,
+                    title: '资料导入',
+                    subtitle: '从完整 JSON 备份恢复，会覆盖当前资料',
+                    action: FilledButton.tonalIcon(
+                      onPressed: _isBusy ? null : _pickAndImportJson,
+                      icon: const Icon(Icons.upload_file_outlined),
+                      label: const Text('导入 JSON'),
+                    ),
+                  ),
+                  const Divider(height: 24),
+                  _SettingsActionRow(
+                    icon: Icons.science_outlined,
+                    title: '示例资料',
+                    subtitle: '写入一套示例账户和交易，用于演示与测试',
+                    action: OutlinedButton.icon(
+                      onPressed: _isBusy ? null : _loadExampleData,
+                      icon: const Icon(Icons.science_outlined),
+                      label: const Text('写入示例'),
+                    ),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 16),
             SectionCard(
-              title: '资料导入',
-              child: FilledButton.tonalIcon(
-                onPressed: _isBusy ? null : _pickAndImportJson,
-                icon: const Icon(Icons.upload_file_outlined),
-                label: const Text('导入 JSON'),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SectionCard(
-              title: '工具',
-              child: OutlinedButton.icon(
-                onPressed: _isBusy ? null : _loadExampleData,
-                icon: const Icon(Icons.science_outlined),
-                label: const Text('写入示例资料'),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SectionCard(
-              title: 'AI 网关',
-              subtitle: '配置 AI 分析网关地址',
+              title: '智能分析',
+              subtitle: '配置报表页 AI 分析网关地址',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -637,13 +651,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     onPressed: _isBusy
                         ? null
                         : () async {
+                            final messenger = ScaffoldMessenger.of(context);
                             await _runBusyTask(() async {
                               await widget.repository.saveAiGatewayUrl(
                                 _gatewayUrlController.text.trim(),
                               );
                               ref.invalidate(financeRepositoryProvider);
                               if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
+                                messenger.showSnackBar(
                                   const SnackBar(content: Text('AI 网关地址已保存')),
                                 );
                               }
@@ -688,6 +703,101 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       case AppThemeStyle.darkWood:
         return '沉木';
     }
+  }
+}
+
+class _SettingsSubsectionLabel extends StatelessWidget {
+  const _SettingsSubsectionLabel(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Text(
+      label,
+      style: theme.textTheme.labelMedium?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+}
+
+class _SettingsActionRow extends StatelessWidget {
+  const _SettingsActionRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.action,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget action;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final iconBadge = Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.55),
+      ),
+      child: Icon(
+        icon,
+        size: 20,
+        color: theme.colorScheme.onPrimaryContainer,
+      ),
+    );
+    final copy = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(subtitle, style: theme.textTheme.bodySmall),
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 520) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  iconBadge,
+                  const SizedBox(width: 12),
+                  Expanded(child: copy),
+                ],
+              ),
+              const SizedBox(height: 10),
+              action,
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            iconBadge,
+            const SizedBox(width: 12),
+            Expanded(child: copy),
+            const SizedBox(width: 12),
+            action,
+          ],
+        );
+      },
+    );
   }
 }
 

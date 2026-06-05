@@ -7,6 +7,8 @@ import '../../core/providers/mutations/budget_mutations.dart';
 
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/month_key.dart';
+import '../shared/finance_action_menu_button.dart';
+import '../shared/finance_metric_card.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 import 'budget_form_dialog.dart';
@@ -88,31 +90,31 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
                 },
               ),
               const SizedBox(height: 14),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
+              FinanceMetricGrid(
+                maxColumns: 2,
+                minItemWidth: 168,
                 children: [
-                  _SummaryMetric(
+                  FinanceMetricCard(
                     label: '总预算',
                     value: formatMoney(totalBudget),
-                    tone: _MetricTone.neutral,
+                    tone: FinanceMetricTone.neutral,
                   ),
-                  _SummaryMetric(
+                  FinanceMetricCard(
                     label: '实际',
                     value: formatMoney(totalSpent),
-                    tone: _MetricTone.expense,
+                    tone: FinanceMetricTone.expense,
                   ),
-                  _SummaryMetric(
+                  FinanceMetricCard(
                     label: '预计',
                     value: formatMoney(totalPlanned),
-                    tone: _MetricTone.warning,
+                    tone: FinanceMetricTone.warning,
                   ),
-                  _SummaryMetric(
+                  FinanceMetricCard(
                     label: '预算池余额',
                     value: formatMoney(totalBalance),
                     tone: totalBalance >= 0
-                        ? _MetricTone.income
-                        : _MetricTone.expense,
+                        ? FinanceMetricTone.income
+                        : FinanceMetricTone.expense,
                   ),
                 ],
               ),
@@ -175,8 +177,7 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
 
   Future<void> _confirmDeleteBudget(BuildContext context, Budget budget) async {
     final categoryName = widget.repository.categoryName(budget.categoryId);
-    final confirmed =
-        await showDialog<bool>(
+    final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('删除预算'),
@@ -253,16 +254,14 @@ class _BudgetTile extends StatelessWidget {
     );
     final yearKey = selectedMonth.split('-').first;
     final annualBudget = monthlyBudget * 12;
-    final annualSpent =
-        List.generate(
-          12,
-          (index) => '$yearKey-${(index + 1).toString().padLeft(2, '0')}',
-        ).fold<double>(
-          0,
-          (sum, monthKey) =>
-              sum +
-              repository.expenseTotalForCategory(budget.categoryId, monthKey),
-        );
+    final annualSpent = List.generate(
+      12,
+      (index) => '$yearKey-${(index + 1).toString().padLeft(2, '0')}',
+    ).fold<double>(
+      0,
+      (sum, monthKey) =>
+          sum + repository.expenseTotalForCategory(budget.categoryId, monthKey),
+    );
     final displayAnnualBudget = repository.convertFromBase(
       annualBudget,
       displayCurrency,
@@ -271,9 +270,8 @@ class _BudgetTile extends StatelessWidget {
       annualSpent,
       displayCurrency,
     );
-    final usage = effectiveBudget <= 0
-        ? 0.0
-        : (spent / effectiveBudget).clamp(0.0, 1.0);
+    final usage =
+        effectiveBudget <= 0 ? 0.0 : (spent / effectiveBudget).clamp(0.0, 1.0);
     final theme = Theme.of(context);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -334,7 +332,9 @@ class _BudgetTile extends StatelessWidget {
                               ),
                               child: Text(
                                 '结转',
-                                style: Theme.of(context).textTheme.labelSmall
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelSmall
                                     ?.copyWith(
                                       color: const Color(0xFFE8A838),
                                       fontWeight: FontWeight.w700,
@@ -357,8 +357,22 @@ class _BudgetTile extends StatelessWidget {
                       currency: displayCurrency,
                     ),
                   ),
-                  PopupMenuButton<String>(
-                    padding: EdgeInsets.zero,
+                  FinanceActionMenuButton<String>(
+                    tooltip: '预算操作',
+                    items: const [
+                      FinanceActionMenuItem(
+                        value: 'edit',
+                        label: '编辑',
+                        icon: Icons.edit_outlined,
+                      ),
+                      FinanceActionMenuItem(
+                        value: 'delete',
+                        label: '删除',
+                        icon: Icons.delete_outline,
+                        destructive: true,
+                        dividerBefore: true,
+                      ),
+                    ],
                     onSelected: (value) async {
                       if (value == 'edit') {
                         await onEdit();
@@ -367,46 +381,43 @@ class _BudgetTile extends StatelessWidget {
                         await onDelete();
                       }
                     },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'edit', child: Text('编辑')),
-                      PopupMenuItem(value: 'delete', child: Text('删除')),
-                    ],
                   ),
                 ],
               ),
             ),
             if (isExpanded) ...[
               const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
+              FinanceMetricGrid(
+                gap: 8,
+                minItemWidth: 136,
+                maxColumns: 3,
                 children: [
-                  _SummaryMetric(
+                  FinanceMetricCard(
                     label: '实际',
                     value: formatMoney(displaySpent, currency: displayCurrency),
                   ),
-                  _SummaryMetric(
+                  FinanceMetricCard(
                     label: '预计',
                     value: formatMoney(
                       displayPlanned,
                       currency: displayCurrency,
                     ),
                   ),
-                  _SummaryMetric(
+                  FinanceMetricCard(
                     label: '月预算',
                     value: formatMoney(
                       displayMonthlyBudget,
                       currency: displayCurrency,
                     ),
                   ),
-                  _SummaryMetric(
+                  FinanceMetricCard(
                     label: '年度预算',
                     value: formatMoney(
                       displayAnnualBudget,
                       currency: displayCurrency,
                     ),
                   ),
-                  _SummaryMetric(
+                  FinanceMetricCard(
                     label: '年内已用',
                     value: formatMoney(
                       displayAnnualSpent,
@@ -472,63 +483,6 @@ class _InlineBudgetSummary extends StatelessWidget {
           textAlign: TextAlign.right,
         ),
       ],
-    );
-  }
-}
-
-enum _MetricTone { neutral, income, expense, warning }
-
-class _SummaryMetric extends StatelessWidget {
-  const _SummaryMetric({
-    required this.label,
-    required this.value,
-    this.tone = _MetricTone.neutral,
-  });
-
-  final String label;
-  final String value;
-  final _MetricTone tone;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final color = switch (tone) {
-      _MetricTone.income => const Color(0xFF6AAF8A),
-      _MetricTone.expense => const Color(0xFFE07B7B),
-      _MetricTone.warning => const Color(0xFFE8A838),
-      _MetricTone.neutral => const Color(0xFF5B9BD5),
-    };
-    return Container(
-      width: 152,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: theme.cardColor,
-        border: Border.all(color: color.withValues(alpha: 0.22), width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.06),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: theme.textTheme.labelSmall),
-          const SizedBox(height: 5),
-          Text(
-            value,
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: color,
-              fontWeight: FontWeight.w800,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      ),
     );
   }
 }

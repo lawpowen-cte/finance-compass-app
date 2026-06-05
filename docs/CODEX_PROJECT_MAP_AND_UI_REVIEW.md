@@ -430,3 +430,38 @@ flutter test test/ai_analysis_integration_test.dart
 4. 如果是金额/余额/预算问题，优先查 `FinanceRepository`，再查 `AppDatabase` 写入副作用。
 5. 如果是 UI 问题，先看对应 screen 内私有 widget，再决定是否抽到 `features/shared/`。
 6. 修改后按第 8 节跑最小测试集。
+
+## 10. 待更新事项
+
+### 6. 组件抽取包
+
+状态：已完成，2026-06-05。
+
+目标：为后续维护提速，不一定第一轮做；优先保证行为不变，再逐步替换重复 UI。
+
+已抽取：
+
+- `lib/src/features/shared/finance_metric_card.dart`
+  - `FinanceMetricCard`
+  - `FinanceMetricGrid`
+- `lib/src/features/shared/finance_filter_bar.dart`
+  - `FinanceFilterBar`
+  - `FinanceFilterChipData`
+- `lib/src/features/shared/finance_status_chip.dart`
+  - `FinanceStatusChip`
+- `lib/src/features/shared/finance_action_menu_button.dart`
+  - `FinanceActionMenuButton`
+  - `FinanceActionMenuItem`
+
+已接入页面：
+
+- `TransactionsScreen`：筛选条、active filter chips、结果汇总指标、交易/模板/周期菜单、状态 chip。
+- `AccountsScreen`：账户操作菜单、对账状态 chip。
+- `ReportsScreen`：KPI 总览指标。
+- `BudgetsScreen`：预算概览、展开指标、预算操作菜单。
+
+后续继续拆分原则：
+
+- 第一轮已只抽纯展示组件和轻状态组件，没有搬业务计算。
+- 之后每次抽一个页面 section，例如账户目标区、报表趋势图、交易类别管理。
+- 抽取后优先放在 `lib/src/features/shared/`；如果只服务单页，先放该 feature 的 `widgets/` 子目录。

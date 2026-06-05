@@ -6,16 +6,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/providers/ai_analysis_provider.dart';
 import '../../core/models/account.dart';
-import '../../core/models/category.dart';
 import '../../core/models/monthly_summary.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/month_key.dart';
 import '../../core/utils/month_range.dart';
+import '../shared/finance_metric_card.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 
 enum ReportRangeType { last3Months, last6Months, last12Months, currentYear }
+
 enum ReportMeasureMode { monthly, cumulative }
+
 enum DataFilterMode { actual, all }
 
 class ReportsScreen extends ConsumerStatefulWidget {
@@ -45,9 +47,13 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
           (monthKey) => MonthlySummary(
             monthKey: monthKey,
             income: repository.totalIncomeForMonth(monthKey) +
-                (includePlanned ? repository.plannedIncomeForMonth(monthKey) : 0),
+                (includePlanned
+                    ? repository.plannedIncomeForMonth(monthKey)
+                    : 0),
             expense: repository.totalExpenseForMonth(monthKey) +
-                (includePlanned ? repository.plannedExpenseForMonth(monthKey) : 0),
+                (includePlanned
+                    ? repository.plannedExpenseForMonth(monthKey)
+                    : 0),
           ),
         )
         .toList();
@@ -61,87 +67,71 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
 
     // 本月实际数据 (or actual+planned)
     final actualIncome = repository.totalIncomeForMonth(currentMonthKey) +
-        (includePlanned ? repository.plannedIncomeForMonth(currentMonthKey) : 0);
+        (includePlanned
+            ? repository.plannedIncomeForMonth(currentMonthKey)
+            : 0);
     final actualExpense = repository.totalExpenseForMonth(currentMonthKey) +
-        (includePlanned ? repository.plannedExpenseForMonth(currentMonthKey) : 0);
+        (includePlanned
+            ? repository.plannedExpenseForMonth(currentMonthKey)
+            : 0);
 
     // 累计数据（所选时间范围的总和）
-    final cumulativeIncome = rawSummaries.fold<double>(0, (sum, s) => sum + s.income);
-    final cumulativeExpense = rawSummaries.fold<double>(0, (sum, s) => sum + s.expense);
+    final cumulativeIncome =
+        rawSummaries.fold<double>(0, (sum, s) => sum + s.income);
+    final cumulativeExpense =
+        rawSummaries.fold<double>(0, (sum, s) => sum + s.expense);
 
     // KPI 根据模式选择数据
-    final kpiIncome = measureMode == ReportMeasureMode.cumulative ? cumulativeIncome : actualIncome;
-    final kpiExpense = measureMode == ReportMeasureMode.cumulative ? cumulativeExpense : actualExpense;
+    final kpiIncome = measureMode == ReportMeasureMode.cumulative
+        ? cumulativeIncome
+        : actualIncome;
+    final kpiExpense = measureMode == ReportMeasureMode.cumulative
+        ? cumulativeExpense
+        : actualExpense;
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        ScreenHeader(
+        const ScreenHeader(
           title: '报表',
-          actions: [
-            DropdownButton<ReportRangeType>(
-              value: rangeType,
-              items: const [
-                DropdownMenuItem(value: ReportRangeType.last3Months, child: Text('近 3 个月')),
-                DropdownMenuItem(value: ReportRangeType.last6Months, child: Text('近 6 个月')),
-                DropdownMenuItem(value: ReportRangeType.last12Months, child: Text('近 12 个月')),
-                DropdownMenuItem(value: ReportRangeType.currentYear, child: Text('本年度')),
-              ],
-              onChanged: (value) => setState(() => rangeType = value!),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: SegmentedButton<ReportMeasureMode>(
-                segments: const [
-                  ButtonSegment(value: ReportMeasureMode.monthly, label: Text('单月')),
-                  ButtonSegment(value: ReportMeasureMode.cumulative, label: Text('累计')),
-                ],
-                selected: {measureMode},
-                onSelectionChanged: (selection) {
-                  setState(() => measureMode = selection.first);
-                },
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(child: _AiAnalysisButton(
-              includePlanned: dataFilterMode == DataFilterMode.all,
-              monthCount: _monthCountForRange(rangeType),
-            )),
-          ],
-        ),
-        _AiResultDisplay(),
-        const SizedBox(height: 16),
-
-        // ── 已发生 / 全部(含预计) toggle ──
-        SegmentedButton<DataFilterMode>(
-          segments: const [
-            ButtonSegment(value: DataFilterMode.actual, label: Text('已发生')),
-            ButtonSegment(value: DataFilterMode.all, label: Text('全部(含预计)')),
-          ],
-          selected: {dataFilterMode},
-          onSelectionChanged: (selection) {
-            setState(() => dataFilterMode = selection.first);
-          },
+          subtitle: '按时间范围、统计口径和数据范围查看财务表现',
         ),
         const SizedBox(height: 16),
-
-        // ── KPI 卡片 ──
-        _KpiCards(
-          totalAssets: repository.totalAssets(),
-          monthlyIncome: kpiIncome,
-          monthlyExpense: kpiExpense,
-          isCumulative: measureMode == ReportMeasureMode.cumulative,
+        SectionCard(
+          title: '分析口径',
+          subtitle:
+              '${_rangeLabel(rangeType)} · ${_measureLabel(measureMode)} · ${_dataFilterLabel(dataFilterMode)}',
+          child: _ReportControls(
+            rangeType: rangeType,
+            measureMode: measureMode,
+            dataFilterMode: dataFilterMode,
+            monthCount: _monthCountForRange(rangeType),
+            onRangeChanged: (value) => setState(() => rangeType = value),
+            onMeasureChanged: (value) => setState(() => measureMode = value),
+            onDataFilterChanged: (value) =>
+                setState(() => dataFilterMode = value),
+          ),
+        ),
+        const _AiResultDisplay(),
+        const SizedBox(height: 16),
+        SectionCard(
+          title: '总览',
+          subtitle: measureMode == ReportMeasureMode.cumulative
+              ? '所选时间范围累计'
+              : '$currentMonthKey 本月表现',
+          child: _KpiCards(
+            totalAssets: repository.totalAssets(),
+            monthlyIncome: kpiIncome,
+            monthlyExpense: kpiExpense,
+            isCumulative: measureMode == ReportMeasureMode.cumulative,
+          ),
         ),
         const SizedBox(height: 16),
 
         // ── 目标进度条 ──
         if (goalSummaries.isNotEmpty) ...[
           SectionCard(
-            title: '🎯 资产目标',
+            title: '资产目标',
             child: Column(
               children: goalSummaries.map((g) {
                 final pct = g.progressRatio * 100;
@@ -160,17 +150,22 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                           Expanded(
                             child: Text(
                               g.goal.name,
-                              style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w500, fontSize: 13),
                             ),
                           ),
                           Text(
                             '${formatMoney(g.currentAssets)} / ${formatMoney(g.goal.targetAmount)}',
-                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.grey[600]),
                           ),
                           const SizedBox(width: 8),
                           Text(
                             '${pct.toStringAsFixed(1)}%',
-                            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: color),
+                            style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 12,
+                                color: color),
                           ),
                         ],
                       ),
@@ -195,8 +190,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
 
         // ── 收支趋势 ──
         SectionCard(
-          title: measureMode == ReportMeasureMode.monthly ? '📊 收支趋势' : '📊 累计趋势',
-          subtitle: rangeType == ReportRangeType.currentYear ? '未来月份浅色标记' : null,
+          title: measureMode == ReportMeasureMode.monthly ? '收支趋势' : '累计趋势',
+          subtitle: rangeType == ReportRangeType.currentYear
+              ? '本年度，未来月份浅色标记'
+              : _rangeLabel(rangeType),
           child: _MonthlyBarChart(
             summaries: displaySummaries,
             now: now,
@@ -204,31 +201,36 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         ),
         const SizedBox(height: 16),
 
-        // ── 资产分布 (饼图) ──
-        SectionCard(
-          title: '💰 资产分布',
-          child: _AssetDistributionPieChart(repository: repository),
-        ),
-        const SizedBox(height: 16),
-
-        // ── 账户明细 ──
-        SectionCard(
-          title: '🏦 账户明细',
-          child: _AccountDetails(repository: repository),
+        _ReportCardGrid(
+          children: [
+            SectionCard(
+              title: '资产分布',
+              subtitle: '按报表分组',
+              child: _AssetDistributionPieChart(repository: repository),
+            ),
+            SectionCard(
+              title: '账户明细',
+              subtitle: '按当前月截止日',
+              child: _AccountDetails(repository: repository),
+            ),
+          ],
         ),
         const SizedBox(height: 16),
 
         // ── 预算状态 ──
         SectionCard(
-          title: '📋 预算执行',
+          title: '预算执行',
           subtitle: monthLabel(budgetMonth),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (activeBudgets.isEmpty) const Text('暂无预算数据', style: TextStyle(color: Colors.grey)),
+              if (activeBudgets.isEmpty)
+                const Text('暂无预算数据', style: TextStyle(color: Colors.grey)),
               ...activeBudgets.map((budget) {
-                final effective = repository.effectiveBudgetForMonth(budget, budgetMonth);
-                final spent = repository.expenseTotalForCategory(budget.categoryId, budgetMonth);
+                final effective =
+                    repository.effectiveBudgetForMonth(budget, budgetMonth);
+                final spent = repository.expenseTotalForCategory(
+                    budget.categoryId, budgetMonth);
                 final ratio = effective > 0 ? spent / effective : 0.0;
                 final isOver = ratio > 1.0;
                 final color = isOver
@@ -246,12 +248,14 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                           Expanded(
                             child: Text(
                               repository.categoryName(budget.categoryId),
-                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                              style: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w500),
                             ),
                           ),
                           Text(
                             '${formatMoney(spent)} / ${formatMoney(effective)}',
-                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.grey[600]),
                           ),
                         ],
                       ),
@@ -321,6 +325,175 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   }
 }
 
+String _rangeLabel(ReportRangeType type) {
+  return switch (type) {
+    ReportRangeType.last3Months => '近 3 个月',
+    ReportRangeType.last6Months => '近 6 个月',
+    ReportRangeType.last12Months => '近 12 个月',
+    ReportRangeType.currentYear => '本年度',
+  };
+}
+
+String _measureLabel(ReportMeasureMode mode) {
+  return switch (mode) {
+    ReportMeasureMode.monthly => '单月',
+    ReportMeasureMode.cumulative => '累计',
+  };
+}
+
+String _dataFilterLabel(DataFilterMode mode) {
+  return switch (mode) {
+    DataFilterMode.actual => '已发生',
+    DataFilterMode.all => '含预计',
+  };
+}
+
+class _ReportControls extends StatelessWidget {
+  const _ReportControls({
+    required this.rangeType,
+    required this.measureMode,
+    required this.dataFilterMode,
+    required this.monthCount,
+    required this.onRangeChanged,
+    required this.onMeasureChanged,
+    required this.onDataFilterChanged,
+  });
+
+  final ReportRangeType rangeType;
+  final ReportMeasureMode measureMode;
+  final DataFilterMode dataFilterMode;
+  final int monthCount;
+  final ValueChanged<ReportRangeType> onRangeChanged;
+  final ValueChanged<ReportMeasureMode> onMeasureChanged;
+  final ValueChanged<DataFilterMode> onDataFilterChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 560;
+        final rangeField = DropdownButtonFormField<ReportRangeType>(
+          key: ValueKey(rangeType),
+          initialValue: rangeType,
+          decoration: const InputDecoration(
+            labelText: '时间范围',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+          items: ReportRangeType.values
+              .map(
+                (type) => DropdownMenuItem(
+                  value: type,
+                  child: Text(_rangeLabel(type)),
+                ),
+              )
+              .toList(),
+          onChanged: (value) {
+            if (value != null) {
+              onRangeChanged(value);
+            }
+          },
+        );
+        final measureToggle = SegmentedButton<ReportMeasureMode>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: ReportMeasureMode.monthly, label: Text('单月')),
+            ButtonSegment(
+              value: ReportMeasureMode.cumulative,
+              label: Text('累计'),
+            ),
+          ],
+          selected: {measureMode},
+          onSelectionChanged: (selection) {
+            onMeasureChanged(selection.first);
+          },
+        );
+        final dataToggle = SegmentedButton<DataFilterMode>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: DataFilterMode.actual, label: Text('已发生')),
+            ButtonSegment(value: DataFilterMode.all, label: Text('含预计')),
+          ],
+          selected: {dataFilterMode},
+          onSelectionChanged: (selection) {
+            onDataFilterChanged(selection.first);
+          },
+        );
+        final aiButton = SizedBox(
+          height: 48,
+          child: _AiAnalysisButton(
+            includePlanned: dataFilterMode == DataFilterMode.all,
+            monthCount: monthCount,
+          ),
+        );
+
+        if (!wide) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              rangeField,
+              const SizedBox(height: 12),
+              measureToggle,
+              const SizedBox(height: 12),
+              dataToggle,
+              const SizedBox(height: 12),
+              aiButton,
+            ],
+          );
+        }
+
+        return Column(
+          children: [
+            Row(
+              children: [
+                Expanded(child: rangeField),
+                const SizedBox(width: 12),
+                Expanded(child: aiButton),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: measureToggle),
+                const SizedBox(width: 12),
+                Expanded(child: dataToggle),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ReportCardGrid extends StatelessWidget {
+  const _ReportCardGrid({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    const gap = 12.0;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 720 ? 2 : 1;
+        final itemWidth =
+            (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          children: [
+            for (final child in children)
+              SizedBox(
+                width: itemWidth,
+                child: child,
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 // ── KPI 卡片 ─────────────────────────────────────────────────
 class _KpiCards extends StatelessWidget {
   const _KpiCards({
@@ -339,52 +512,42 @@ class _KpiCards extends StatelessWidget {
   Widget build(BuildContext context) {
     final net = monthlyIncome - monthlyExpense;
     final prefix = isCumulative ? '累计' : '本月';
-    return Wrap(
-      spacing: 10,
-      runSpacing: 10,
-      children: [
-        _KpiCard(label: '总资产', value: formatMoney(totalAssets), color: const Color(0xFF5B9BD5)),
-        _KpiCard(label: '${prefix}收入', value: formatMoney(monthlyIncome), color: const Color(0xFF6AAF8A)),
-        _KpiCard(label: '${prefix}支出', value: formatMoney(monthlyExpense), color: const Color(0xFFE07B7B)),
-        _KpiCard(label: '${prefix}结余', value: formatMoney(net), color: net >= 0 ? const Color(0xFF6AAF8A) : const Color(0xFFE07B7B)),
-      ],
-    );
-  }
-}
-
-class _KpiCard extends StatelessWidget {
-  const _KpiCard({required this.label, required this.value, required this.color});
-
-  final String label;
-  final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: (MediaQuery.of(context).size.width - 42) / 2,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.2), width: 1),
-        boxShadow: [
-          BoxShadow(color: color.withValues(alpha: 0.06), blurRadius: 8, offset: const Offset(0, 2)),
-        ],
+    final cards = [
+      FinanceMetricCard(
+        label: '总资产',
+        value: formatMoney(totalAssets),
+        color: const Color(0xFF5B9BD5),
+        padding: const EdgeInsets.all(14),
+        valueSize: 17,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: color),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
+      FinanceMetricCard(
+        label: '$prefix收入',
+        value: formatMoney(monthlyIncome),
+        color: const Color(0xFF6AAF8A),
+        padding: const EdgeInsets.all(14),
+        valueSize: 17,
       ),
+      FinanceMetricCard(
+        label: '$prefix支出',
+        value: formatMoney(monthlyExpense),
+        color: const Color(0xFFE07B7B),
+        padding: const EdgeInsets.all(14),
+        valueSize: 17,
+      ),
+      FinanceMetricCard(
+        label: '$prefix结余',
+        value: formatMoney(net),
+        color: net >= 0 ? const Color(0xFF6AAF8A) : const Color(0xFFE07B7B),
+        padding: const EdgeInsets.all(14),
+        valueSize: 17,
+      ),
+    ];
+
+    return FinanceMetricGrid(
+      gap: 10,
+      minItemWidth: 168,
+      maxColumns: 4,
+      children: cards,
     );
   }
 }
@@ -412,9 +575,9 @@ class _MonthlyBarChart extends StatelessWidget {
       (max, item) => math.max(max, math.max(item.income, item.expense)),
     );
     if (maxValue == 0) {
-      return SizedBox(
+      return const SizedBox(
         height: _chartHeight,
-        child: const Center(child: Text('暂无数据')),
+        child: Center(child: Text('暂无数据')),
       );
     }
 
@@ -433,19 +596,27 @@ class _MonthlyBarChart extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Container(width: 10, height: 10, decoration: BoxDecoration(
-                  color: const Color(0xFF6AAF8A),
-                  borderRadius: BorderRadius.circular(2),
-                )),
+                Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6AAF8A),
+                      borderRadius: BorderRadius.circular(2),
+                    )),
                 const SizedBox(width: 4),
-                Text('收入', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                Text('收入',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[600])),
                 const SizedBox(width: 16),
-                Container(width: 10, height: 10, decoration: BoxDecoration(
-                  color: const Color(0xFFE07B7B),
-                  borderRadius: BorderRadius.circular(2),
-                )),
+                Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE07B7B),
+                      borderRadius: BorderRadius.circular(2),
+                    )),
                 const SizedBox(width: 4),
-                Text('支出', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                Text('支出',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[600])),
               ],
             ),
           ),
@@ -464,7 +635,8 @@ class _MonthlyBarChart extends StatelessWidget {
                         padding: const EdgeInsets.only(right: 4),
                         child: Text(
                           label,
-                          style: TextStyle(fontSize: 9, color: Colors.grey[500]),
+                          style:
+                              TextStyle(fontSize: 9, color: Colors.grey[500]),
                         ),
                       );
                     }).toList(),
@@ -487,7 +659,8 @@ class _MonthlyBarChart extends StatelessWidget {
                           right: 0,
                           top: ratio * (_chartHeight - _bottomLabelHeight),
                           child: Container(
-                            height: entry.key == axisLabels.length - 1 ? 1 : 0.5,
+                            height:
+                                entry.key == axisLabels.length - 1 ? 1 : 0.5,
                             color: entry.key == axisLabels.length - 1
                                 ? Colors.grey[300]
                                 : Colors.grey[100],
@@ -499,12 +672,16 @@ class _MonthlyBarChart extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: summaries.map((s) {
                           final isFuture = s.monthKey.compareTo(nowKey) > 0;
-                          final barAreaHeight = _chartHeight - _bottomLabelHeight;
-                          final incomeHeight = (s.income / niceMax) * barAreaHeight;
-                          final expenseHeight = (s.expense / niceMax) * barAreaHeight;
+                          const barAreaHeight =
+                              _chartHeight - _bottomLabelHeight;
+                          final incomeHeight =
+                              (s.income / niceMax) * barAreaHeight;
+                          final expenseHeight =
+                              (s.expense / niceMax) * barAreaHeight;
                           return Expanded(
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 2),
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 2),
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.end,
                                 children: [
@@ -517,9 +694,11 @@ class _MonthlyBarChart extends StatelessWidget {
                                         height: incomeHeight,
                                         decoration: BoxDecoration(
                                           color: isFuture
-                                              ? const Color(0xFF6AAF8A).withValues(alpha: 0.3)
+                                              ? const Color(0xFF6AAF8A)
+                                                  .withValues(alpha: 0.3)
                                               : const Color(0xFF6AAF8A),
-                                          borderRadius: BorderRadius.circular(2),
+                                          borderRadius:
+                                              BorderRadius.circular(2),
                                         ),
                                       ),
                                       const SizedBox(width: 2),
@@ -528,9 +707,11 @@ class _MonthlyBarChart extends StatelessWidget {
                                         height: expenseHeight,
                                         decoration: BoxDecoration(
                                           color: isFuture
-                                              ? const Color(0xFFE07B7B).withValues(alpha: 0.3)
+                                              ? const Color(0xFFE07B7B)
+                                                  .withValues(alpha: 0.3)
                                               : const Color(0xFFE07B7B),
-                                          borderRadius: BorderRadius.circular(2),
+                                          borderRadius:
+                                              BorderRadius.circular(2),
                                         ),
                                       ),
                                     ],
@@ -542,7 +723,9 @@ class _MonthlyBarChart extends StatelessWidget {
                                         monthLabel(s.monthKey),
                                         style: TextStyle(
                                           fontSize: 9,
-                                          color: isFuture ? Colors.grey[400] : Colors.grey[600],
+                                          color: isFuture
+                                              ? Colors.grey[400]
+                                              : Colors.grey[600],
                                         ),
                                       ),
                                     ),
@@ -566,7 +749,8 @@ class _MonthlyBarChart extends StatelessWidget {
 
   double _niceMaxValue(double value) {
     if (value <= 0) return 1;
-    final magnitude = math.pow(10, (math.log(value) / math.ln10).floor()).toDouble();
+    final magnitude =
+        math.pow(10, (math.log(value) / math.ln10).floor()).toDouble();
     final normalized = value / magnitude;
     double niceNormalized;
     if (normalized <= 1.0) {
@@ -632,62 +816,77 @@ class _AssetDistributionPieChart extends StatelessWidget {
       }
     }
 
-    return Row(
+    final pie = SizedBox(
+      width: 140,
+      height: 140,
+      child: CustomPaint(
+        painter: _PieChartPainter(entries: entries),
+      ),
+    );
+    final legend = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Pie chart
-        SizedBox(
-          width: 140,
-          height: 140,
-          child: CustomPaint(
-            painter: _PieChartPainter(entries: entries),
-          ),
-        ),
-        const SizedBox(width: 20),
-        // Legend
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: entries.map((e) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: e.color,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        e.label,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          formatMoney(e.amount),
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                        ),
-                        Text(
-                          '${e.pct.toStringAsFixed(1)}%',
-                          style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                        ),
-                      ],
-                    ),
-                  ],
+      children: entries.map((e) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: e.color,
+                  shape: BoxShape.circle,
                 ),
-              );
-            }).toList(),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  e.label,
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    formatMoney(e.amount),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  Text(
+                    '${e.pct.toStringAsFixed(1)}%',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                  ),
+                ],
+              ),
+            ],
           ),
-        ),
-      ],
+        );
+      }).toList(),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 360) {
+          return Column(
+            children: [
+              Center(child: pie),
+              const SizedBox(height: 14),
+              legend,
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            pie,
+            const SizedBox(width: 20),
+            Expanded(child: legend),
+          ],
+        );
+      },
     );
   }
 
@@ -738,7 +937,11 @@ class _AssetEntry {
   final double amount;
   final double pct;
   final Color color;
-  _AssetEntry({required this.label, required this.amount, required this.pct, required this.color});
+  _AssetEntry(
+      {required this.label,
+      required this.amount,
+      required this.pct,
+      required this.color});
 }
 
 // ── 账户明细 ─────────────────────────────────────────────────
@@ -777,7 +980,8 @@ class _AccountDetails extends StatelessWidget {
                 flex: 3,
                 child: Text(
                   row.name,
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w500),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -793,7 +997,9 @@ class _AccountDetails extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
-                  color: isNegative ? const Color(0xFFE07B7B) : const Color(0xFF6AAF8A),
+                  color: isNegative
+                      ? const Color(0xFFE07B7B)
+                      : const Color(0xFF6AAF8A),
                 ),
               ),
             ],
@@ -835,7 +1041,8 @@ class _AccountRow {
   final String name;
   final String typeLabel;
   final double balance;
-  _AccountRow({required this.name, required this.typeLabel, required this.balance});
+  _AccountRow(
+      {required this.name, required this.typeLabel, required this.balance});
 }
 
 // ── AI 分析 ─────────────────────────────────────────────────
@@ -867,7 +1074,7 @@ class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
           showDialog(
             context: context,
             builder: (ctx) => AlertDialog(
-              title: const Text('❌ AI 分析失败'),
+              title: const Text('AI 分析失败'),
               content: Text(next.error!, style: const TextStyle(fontSize: 14)),
               actions: [
                 TextButton(
@@ -889,7 +1096,7 @@ class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('✅ 分析完成'),
+        title: const Text('分析完成'),
         content: const Text('AI 财务分析报告已生成，向下滚动查看。'),
         actions: [
           TextButton(
@@ -912,13 +1119,18 @@ class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
         decoration: BoxDecoration(
           color: Theme.of(context).cardColor,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF5B9BD5).withValues(alpha: 0.2)),
+          border:
+              Border.all(color: const Color(0xFF5B9BD5).withValues(alpha: 0.2)),
         ),
         child: const Row(
           children: [
-            SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2)),
             SizedBox(width: 12),
-            Text('🤖 AI 正在分析中...', style: TextStyle(fontSize: 13, color: Color(0xFF6B8F7B))),
+            Text('AI 正在分析中...',
+                style: TextStyle(fontSize: 13, color: Color(0xFF6B8F7B))),
           ],
         ),
       );
@@ -932,9 +1144,11 @@ class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF5B9BD5).withValues(alpha: 0.2)),
+        border:
+            Border.all(color: const Color(0xFF5B9BD5).withValues(alpha: 0.2)),
         boxShadow: const [
-          BoxShadow(color: Color(0x080F172A), blurRadius: 8, offset: Offset(0, 2)),
+          BoxShadow(
+              color: Color(0x080F172A), blurRadius: 8, offset: Offset(0, 2)),
         ],
       ),
       child: Column(
@@ -942,10 +1156,12 @@ class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
         children: [
           Row(
             children: [
-              const Text('🤖 AI 分析报告', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+              const Text('AI 分析报告',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
               const Spacer(),
               GestureDetector(
-                onTap: () => ref.read(aiAnalysisProvider.notifier).state = const AiAnalysisState(),
+                onTap: () => ref.read(aiAnalysisProvider.notifier).state =
+                    const AiAnalysisState(),
                 child: Icon(Icons.close, size: 18, color: Colors.grey[400]),
               ),
             ],
@@ -953,7 +1169,8 @@ class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
           const SizedBox(height: 12),
           Text(
             aiState.summary!,
-            style: const TextStyle(fontSize: 13, height: 1.6, color: Color(0xFF2D4A3E)),
+            style: const TextStyle(
+                fontSize: 13, height: 1.6, color: Color(0xFF2D4A3E)),
           ),
         ],
       ),
@@ -963,7 +1180,8 @@ class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
 
 /// AI 分析按钮
 class _AiAnalysisButton extends ConsumerWidget {
-  const _AiAnalysisButton({required this.includePlanned, required this.monthCount});
+  const _AiAnalysisButton(
+      {required this.includePlanned, required this.monthCount});
 
   final bool includePlanned;
   final int monthCount;
@@ -979,20 +1197,24 @@ class _AiAnalysisButton extends ConsumerWidget {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(includePlanned
-                      ? '🔄 AI 正在分析全部数据（含预计），完成后会通知你'
-                      : '🔄 AI 正在分析已发生数据，完成后会通知你'),
+                      ? 'AI 正在分析全部数据（含预计），完成后会通知你'
+                      : 'AI 正在分析已发生数据，完成后会通知你'),
                   duration: const Duration(seconds: 3),
                 ),
               );
               ref.read(aiAnalysisProvider.notifier).runAnalysis(
-                includePlanned: includePlanned,
-                monthCount: monthCount,
-              );
+                    includePlanned: includePlanned,
+                    monthCount: monthCount,
+                  );
             },
       icon: aiState.loading
-          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2))
           : const Icon(Icons.auto_awesome_outlined, size: 18),
-      label: Text(aiState.loading ? '分析中...' : 'AI 分析', style: const TextStyle(fontSize: 13)),
+      label: Text(aiState.loading ? '分析中...' : 'AI 分析',
+          style: const TextStyle(fontSize: 13)),
       style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(vertical: 10),
       ),
