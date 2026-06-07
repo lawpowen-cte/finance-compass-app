@@ -6,10 +6,12 @@ import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/mutations/export_mutations.dart';
 import '../../core/providers/repository_provider.dart';
+import '../../core/services/ai_analysis_service.dart';
 
 import '../../core/settings/app_settings_controller.dart';
 import '../../core/settings/app_theme_style.dart';
@@ -283,6 +285,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     });
   }
 
+  Future<void> _shareExternalAiAnalysis() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final box = context.findRenderObject() as RenderBox?;
+    final shareOrigin =
+        box == null ? null : box.localToGlobal(Offset.zero) & box.size;
+
+    await _runBusyTask(() async {
+      try {
+        final text = AiAnalysisService.buildExternalAnalysisText(
+          widget.repository,
+          monthCount: 6,
+          futureMonthCount: 6,
+        );
+        final result = await SharePlus.instance.share(
+          ShareParams(
+            text: text,
+            subject: 'Finance Compass AI 分析',
+            sharePositionOrigin: shareOrigin,
+          ),
+        );
+        if (!mounted || result.status == ShareResultStatus.dismissed) {
+          return;
+        }
+        messenger.showSnackBar(
+          const SnackBar(content: Text('已打开分享面板，请选择 ChatGPT 或其他 AI App')),
+        );
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        messenger.showSnackBar(
+          SnackBar(content: Text('无法打开 AI 分析分享面板：$error')),
+        );
+      }
+    });
+  }
+
   String _validateFullJsonExport(Uint8List bytes) {
     final decoded = jsonDecode(utf8.decode(bytes));
     if (decoded is! Map<String, dynamic>) {
@@ -541,6 +580,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           },
                     icon: const Icon(Icons.save_outlined),
                     label: const Text('保存'),
+                  ),
+                  const Divider(height: 24),
+                  _SettingsActionRow(
+                    icon: Icons.auto_awesome_outlined,
+                    title: '跳转 AI 分析',
+                    subtitle:
+                        '发送完整 prompt、当前财务 JSON 和未来计划数据到 ChatGPT 等手机 AI App',
+                    action: FilledButton.icon(
+                      onPressed: _isBusy ? null : _shareExternalAiAnalysis,
+                      icon: const Icon(Icons.ios_share_outlined),
+                      label: const Text('跳转 AI 分析'),
+                    ),
                   ),
                 ],
               ),

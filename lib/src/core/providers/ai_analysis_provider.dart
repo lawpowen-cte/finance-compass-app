@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../data/finance_repository.dart';
 import '../services/ai_analysis_service.dart';
 import 'repository_provider.dart';
 
@@ -41,6 +40,7 @@ class AiAnalysisNotifier extends Notifier<AiAnalysisState> {
   Future<void> runAnalysis({
     bool includePlanned = false,
     int monthCount = 6,
+    int futureMonthCount = AiAnalysisService.defaultFutureMonthCount,
   }) async {
     final repoAsync = ref.read(financeRepositoryProvider);
     final repo = repoAsync.value;
@@ -63,6 +63,7 @@ class AiAnalysisNotifier extends Notifier<AiAnalysisState> {
         repo,
         includePlanned: includePlanned,
         monthCount: monthCount,
+        futureMonthCount: futureMonthCount,
       );
       state = AiAnalysisState(summary: summary, completed: true);
     } catch (e) {

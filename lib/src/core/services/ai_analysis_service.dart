@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 
 import '../data/finance_repository.dart';
@@ -10,19 +11,55 @@ import '../utils/month_key.dart';
 import '../utils/month_range.dart';
 
 class AiAnalysisService {
-  final String gatewayUrl;
+  static const defaultFutureMonthCount = 6;
+
+  static const financeAnalysisSystemPrompt = '''
+你是一个专业、谨慎的个人财务分析师。请根据用户提供的 Finance Compass 财务 JSON，给出简洁但有行动价值的分析。
+
+输出要求：
+- 使用简体中文。
+- 输出纯文字，不要 HTML，不要代码块。
+- 金额使用 JSON 的 base_currency 作为货币前缀，保留 2 位小数。
+- 必须区分“已发生 actual”和“预计/计划 planned”，不要把未来 planned 当成已经发生。
+- 未来推演不要只用历史均值。请优先使用 future_transactions、monthly_actual_planned、cash_flow_projection、budgets_by_month 和 recurring_transaction_rules 中已经记录的未来预计数据；历史趋势只在未来数据缺失时补足，并说明这是估算。
+- 如果周期规则已经生成了未来 planned 交易，不要重复计算；周期规则主要用于解释固定收支来源，或补足尚未生成的后续月份。
+- 不要编造 JSON 中没有的数据；数据不足时明确写出假设。
+
+必须包含：
+📊 财务总结
+- 本月 actual 与 planned 合并后的收支情况，同时说明 actual 已发生部分。
+- 与上月对比的收入、支出、结余变化。
+- 资产分布、现金/信用卡压力、预算执行亮点或风险。
+- 整体财务健康度，用一句话给出判断。
+
+🔮 未来推演
+- 按 future_months 逐月推演：预计收入、预计支出、预计结余、月底现金/信用压力。
+- 先引用已记录的 future planned/recurring 数据，再用历史均值补空白月份。
+- 标出未来 1-2 个最需要注意的月份或类别。
+
+✅ 建议
+- 给出 3-5 条具体行动，优先关注现金流、预算、即将到来的大额支出、可减少的类别。
+''';
 
   AiAnalysisService({
     required this.gatewayUrl,
   });
 
+  final String gatewayUrl;
+
   Future<String> generateAnalysis(
     FinanceRepository repository, {
     bool includePlanned = false,
     int monthCount = 6,
+    int futureMonthCount = defaultFutureMonthCount,
   }) async {
-    final data = _buildRequestData(repository,
-        includePlanned: includePlanned, monthCount: monthCount);
+    final data = buildRequestData(
+      repository,
+      includePlanned: includePlanned,
+      monthCount: monthCount,
+      futureMonthCount: futureMonthCount,
+    );
+    final prompt = buildAnalysisPrompt(data);
     final uri = Uri.parse('$gatewayUrl/api/analyze');
 
     const maxRetries = 2;
@@ -34,12 +71,16 @@ class AiAnalysisService {
             .post(
               uri,
               headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({'data': data}),
+              body: jsonEncode({
+                'data': data,
+                'prompt': prompt,
+              }),
             )
             .timeout(const Duration(seconds: 300));
 
         if (response.statusCode != 200) {
-          throw Exception('Gateway 返回 ${response.statusCode}: ${response.body}');
+          throw Exception(
+              'Gateway 返回 ${response.statusCode}: ${response.body}');
         }
 
         final result = jsonDecode(response.body);
@@ -67,127 +108,200 @@ class AiAnalysisService {
     );
   }
 
-  Map<String, dynamic> _buildRequestData(
+  static Map<String, dynamic> buildRequestData(
     FinanceRepository repository, {
     required bool includePlanned,
     required int monthCount,
+    int futureMonthCount = defaultFutureMonthCount,
   }) {
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
     final currentMonth = monthKeyFromDate(now);
     final lastMonth = monthKeyFromDate(DateTime(now.year, now.month - 1));
-    final monthKeys = recentMonthKeys(count: monthCount, anchor: now);
+    final historyMonthKeys = recentMonthKeys(count: monthCount, anchor: now);
+    final futureMonthKeys = List.generate(
+      futureMonthCount,
+      (index) => monthKeyFromDate(DateTime(now.year, now.month + index + 1)),
+    );
+    final analysisMonthKeys = [
+      ...historyMonthKeys,
+      ...futureMonthKeys,
+    ];
+    final cutoffDate = repository.currentMonthCutoffDate();
 
-    // Account summary (用 base currency)
     final accounts = <Map<String, dynamic>>[];
     for (final group in ReportGroup.values) {
-      for (final acc in repository.accountsByGroup(group)) {
-        final balance = repository.accountBalanceAtBase(acc.id, now);
+      for (final account in repository.accountsByGroup(group)) {
+        final balance = repository.accountBalanceAtBase(account.id, cutoffDate);
         accounts.add({
-          'name': acc.name,
-          'type': acc.accountType.name,
+          'name': account.name,
+          'type': account.accountType.name,
+          'report_group': account.reportGroup.name,
+          'currency': account.currency,
           'balance': balance,
+          'balance_base': balance,
+          'native_balance': repository.accountBalanceAt(account.id, cutoffDate),
+          'is_active': account.isActive,
         });
       }
     }
 
-    // Monthly summary
     final income = repository.totalIncomeForMonth(currentMonth);
     final expense = repository.totalExpenseForMonth(currentMonth);
-    final lastIncome = repository.totalIncomeForMonth(lastMonth);
-    final lastExpense = repository.totalExpenseForMonth(lastMonth);
-
-    // 计算 actual 和 planned
     final plannedIncome = repository.plannedIncomeForMonth(currentMonth);
     final plannedExpense = repository.plannedExpenseForMonth(currentMonth);
-
-    // 根据用户选择确定主要数据
     final displayIncome = includePlanned ? income + plannedIncome : income;
     final displayExpense = includePlanned ? expense + plannedExpense : expense;
 
-    // 支出分类明细（近N个月）
-    final expenseByCategory = repository.categoryTotalsForMonths(
+    final lastActualIncome = repository.totalIncomeForMonth(lastMonth);
+    final lastActualExpense = repository.totalExpenseForMonth(lastMonth);
+    final lastPlannedIncome = repository.plannedIncomeForMonth(lastMonth);
+    final lastPlannedExpense = repository.plannedExpenseForMonth(lastMonth);
+    final lastIncome =
+        lastActualIncome + (includePlanned ? lastPlannedIncome : 0);
+    final lastExpense =
+        lastActualExpense + (includePlanned ? lastPlannedExpense : 0);
+
+    final monthRows = analysisMonthKeys
+        .map(
+          (monthKey) => _monthlyRow(
+            repository,
+            monthKey: monthKey,
+            currentMonth: currentMonth,
+            includePlanned: includePlanned,
+          ),
+        )
+        .toList();
+    final futureMonthRows = futureMonthKeys
+        .map(
+          (monthKey) => _monthlyRow(
+            repository,
+            monthKey: monthKey,
+            currentMonth: currentMonth,
+            includePlanned: true,
+          ),
+        )
+        .toList();
+    final recentMonthsForGateway = (includePlanned
+            ? monthRows
+            : monthRows.where((item) => item['period'] != 'future').toList())
+        .map(
+          (item) => {
+            'month': item['month'],
+            'income': item['analysis_income'],
+            'expense': item['analysis_expense'],
+            'net': item['analysis_net'],
+            'period': item['period'],
+            'actual_income': item['actual_income'],
+            'actual_expense': item['actual_expense'],
+            'planned_income': item['planned_income'],
+            'planned_expense': item['planned_expense'],
+          },
+        )
+        .where(
+          (item) =>
+              (item['income'] as double) != 0 ||
+              (item['expense'] as double) != 0 ||
+              item['period'] == 'future',
+        )
+        .toList();
+
+    final categoryDivisor =
+        monthCount + (includePlanned ? futureMonthCount : 0);
+    final expenseCategories = _categorySummary(
+      repository,
       type: CategoryType.expense,
-      monthKeys: monthKeys,
+      monthKeys: analysisMonthKeys,
+      includePlanned: includePlanned,
+      divisor: categoryDivisor,
     );
-    final expenseCategories = <Map<String, dynamic>>[];
-    for (final entry in expenseByCategory.entries) {
-      if (entry.value > 0) {
-        expenseCategories.add({
-          'name': repository.categoryName(entry.key),
-          'total': entry.value,
-          'monthly_avg': entry.value / monthCount,
-        });
-      }
-    }
-    expenseCategories.sort((a, b) => (b['total'] as double).compareTo(a['total'] as double));
-
-    // 收入分类明细（近N个月）
-    final incomeByCategory = repository.categoryTotalsForMonths(
+    final incomeCategories = _categorySummary(
+      repository,
       type: CategoryType.income,
-      monthKeys: monthKeys,
+      monthKeys: analysisMonthKeys,
+      includePlanned: includePlanned,
+      divisor: categoryDivisor,
     );
-    final incomeCategories = <Map<String, dynamic>>[];
-    for (final entry in incomeByCategory.entries) {
-      if (entry.value > 0) {
-        incomeCategories.add({
-          'name': repository.categoryName(entry.key),
-          'total': entry.value,
-          'monthly_avg': entry.value / monthCount,
-        });
-      }
-    }
-    incomeCategories.sort((a, b) => (b['total'] as double).compareTo(a['total'] as double));
 
-    // Budgets
-    final budgets = <Map<String, dynamic>>[];
-    for (final b in repository.activeBudgetsForMonth(currentMonth)) {
-      final effective = repository.effectiveBudgetForMonth(b, currentMonth);
-      final spent = repository.expenseTotalForCategory(b.categoryId, currentMonth);
-      final catName = repository.categoryName(b.categoryId);
-      budgets.add({
-        'category': catName,
-        'budget': effective,
-        'spent': spent,
-      });
-    }
+    final budgetsByMonth = {
+      for (final monthKey in [currentMonth, ...futureMonthKeys])
+        monthKey: _budgetRowsForMonth(repository, monthKey),
+    };
+    final budgets = budgetsByMonth[currentMonth] ?? const [];
 
-    // Goals
     final goals = <Map<String, dynamic>>[];
-    for (final g in repository.assetGoalSummaries()) {
-      final progress = (g.progressRatio * 100).toStringAsFixed(1);
+    for (final goal in repository.assetGoalSummaries()) {
       goals.add({
-        'name': g.goal.name,
-        'target': g.goal.targetAmount,
-        'current': g.currentAssets,
-        'progress': progress,
-        'is_reached': g.isReached,
+        'name': goal.goal.name,
+        'target': goal.goal.targetAmount,
+        'current': goal.currentAssets,
+        'progress': (goal.progressRatio * 100).toStringAsFixed(1),
+        'is_reached': goal.isReached,
       });
     }
 
-    // 近N个月趋势（根据 includePlanned 决定用哪种数据）
-    final recentMonths = <Map<String, dynamic>>[];
-    for (int i = monthCount - 1; i >= 0; i--) {
-      final mDate = DateTime(now.year, now.month - i);
-      final mKey = monthKeyFromDate(mDate);
-      final mIncome = repository.totalIncomeForMonth(mKey) +
-          (includePlanned ? repository.plannedIncomeForMonth(mKey) : 0);
-      final mExpense = repository.totalExpenseForMonth(mKey) +
-          (includePlanned ? repository.plannedExpenseForMonth(mKey) : 0);
-      if (mIncome > 0 || mExpense > 0) {
-        recentMonths.add({
-          'month': mKey,
-          'income': mIncome,
-          'expense': mExpense,
-          'net': mIncome - mExpense,
-        });
-      }
-    }
+    final futureTransactions = _transactionsInWindow(
+      repository,
+      startDateExclusive: today,
+      endDateInclusive: DateTime(now.year, now.month + futureMonthCount + 1, 0),
+      limit: 120,
+    );
+    final recentActualTransactions = _transactionsInWindow(
+      repository,
+      endDateInclusive: today,
+      limit: 50,
+      descending: true,
+      actualOnly: true,
+    );
+    final recurringRules = repository.recurringTransactionRules
+        .map(
+          (rule) => _recurringRuleRow(
+            repository,
+            rule,
+            now: now,
+            futureMonthCount: futureMonthCount,
+          ),
+        )
+        .toList();
+    final cashFlowProjection = repository
+        .futureCashFlowProjection(months: futureMonthCount + 1)
+        .map(
+          (item) => {
+            'month': item.monthKey,
+            'income': item.income,
+            'expense': item.expense,
+            'transfers': item.transfers,
+            'net': item.net,
+            'ending_cash_after_credit': item.endingCash,
+          },
+        )
+        .toList();
 
     return {
+      'schema_version': 2,
+      'prompt_version': 'finance_compass_current_future_v1',
+      'generated_at': DateTime.now().toIso8601String(),
       'base_currency': repository.baseCurrency,
       'data_mode': includePlanned ? 'all' : 'actual',
+      'data_mode_note': includePlanned
+          ? 'analysis fields include actual plus planned records; actual/planned remain separated'
+          : 'analysis fields use actual records only; future planned data is still included in dedicated future fields',
       'month_count': monthCount,
+      'future_month_count': futureMonthCount,
+      'current_month_key': currentMonth,
+      'history_months': historyMonthKeys,
+      'future_months': futureMonthKeys,
+      'analysis_months': analysisMonthKeys,
+      'currency_priority': repository.currencyPriority,
+      'exchange_rates_to_base': repository.exchangeRatesToBase,
       'accounts': accounts,
+      'assets_by_group': {
+        'cash': repository.totalAssetsByGroup(ReportGroup.cash),
+        'credit': repository.totalAssetsByGroup(ReportGroup.credit),
+        'investment': repository.totalAssetsByGroup(ReportGroup.investment),
+        'retirement': repository.totalAssetsByGroup(ReportGroup.retirement),
+      },
+      'total_assets': repository.totalAssets(),
       'current_month': {
         'income': displayIncome,
         'expense': displayExpense,
@@ -197,17 +311,387 @@ class AiAnalysisService {
         'actual_net': income - expense,
         'planned_income': plannedIncome,
         'planned_expense': plannedExpense,
+        'planned_net': plannedIncome - plannedExpense,
       },
       'last_month': {
         'income': lastIncome,
         'expense': lastExpense,
+        'net': lastIncome - lastExpense,
+        'actual_income': lastActualIncome,
+        'actual_expense': lastActualExpense,
+        'planned_income': lastPlannedIncome,
+        'planned_expense': lastPlannedExpense,
       },
+      'monthly_actual_planned': monthRows,
+      'future_monthly_actual_planned': futureMonthRows,
       'expense_categories': expenseCategories,
       'income_categories': incomeCategories,
       'budgets': budgets,
+      'budgets_by_month': budgetsByMonth,
       'goals': goals,
-      'recent_months': recentMonths,
+      'cash_flow_projection': cashFlowProjection,
+      'future_transactions': futureTransactions,
+      'recent_actual_transactions': recentActualTransactions,
+      'recurring_transaction_rules': recurringRules,
+      'recent_months': recentMonthsForGateway,
+      'analysis_notes': [
+        'planned transactions are user-entered estimates, not completed cash flow',
+        'future_transactions may already include generated recurring records',
+        'recurring_transaction_rules explain fixed patterns and should not be double-counted when matching future planned transactions exist',
+        'cash_flow_projection focuses on cash and credit groups, while total_assets includes investment and retirement groups',
+      ],
     };
+  }
+
+  static String buildAnalysisPrompt(Map<String, dynamic> data) {
+    final baseCurrency = data['base_currency'] ?? 'MYR';
+    final futureMonthCount =
+        data['future_month_count'] ?? defaultFutureMonthCount;
+    return '''
+$financeAnalysisSystemPrompt
+
+请分析下面的 Finance Compass JSON。重点是解析当前财务状态和未来 $futureMonthCount 个月可能情况。
+
+请特别注意：
+1. base_currency 是 $baseCurrency，所有 *_base 或汇总金额都已折算到该货币。
+2. monthly_actual_planned 同时包含历史、当前、未来月份；period=future 的月份通常主要来自 planned 记录。
+3. future_transactions 是用户已经提前记录的未来交易，其中 recurring_rule_id 不为空的记录通常来自周期交易规则。
+4. recurring_transaction_rules 是固定收入/支出/转账规则；如果对应月份已经有 future_transactions，请用交易金额，不要重复加一次规则金额。
+5. budgets_by_month 反映当前月和未来月预算，remaining_after_committed 可以用于判断预算压力。
+6. cash_flow_projection 是基于现金和信用账户的未来现金流压力，不等同于总资产。
+
+请按这个顺序输出：
+📊 财务总结
+🔮 未来$futureMonthCount个月推演
+✅ 建议
+''';
+  }
+
+  static String buildExternalAnalysisText(
+    FinanceRepository repository, {
+    int monthCount = 6,
+    int futureMonthCount = defaultFutureMonthCount,
+  }) {
+    final data = buildRequestData(
+      repository,
+      includePlanned: true,
+      monthCount: monthCount,
+      futureMonthCount: futureMonthCount,
+    );
+    final prompt = buildAnalysisPrompt(data);
+    final jsonText = const JsonEncoder.withIndent('  ').convert(data);
+    return '''
+$prompt
+
+【财务数据 JSON】
+---BEGIN_FINANCE_COMPASS_JSON---
+$jsonText
+---END_FINANCE_COMPASS_JSON---
+''';
+  }
+
+  static Map<String, dynamic> _monthlyRow(
+    FinanceRepository repository, {
+    required String monthKey,
+    required String currentMonth,
+    required bool includePlanned,
+  }) {
+    final actualIncome = repository.totalIncomeForMonth(monthKey);
+    final actualExpense = repository.totalExpenseForMonth(monthKey);
+    final plannedIncome = repository.plannedIncomeForMonth(monthKey);
+    final plannedExpense = repository.plannedExpenseForMonth(monthKey);
+    final analysisIncome = actualIncome + (includePlanned ? plannedIncome : 0);
+    final analysisExpense =
+        actualExpense + (includePlanned ? plannedExpense : 0);
+    return {
+      'month': monthKey,
+      'period': monthKey.compareTo(currentMonth) < 0
+          ? 'past'
+          : monthKey == currentMonth
+              ? 'current'
+              : 'future',
+      'actual_income': actualIncome,
+      'actual_expense': actualExpense,
+      'actual_net': actualIncome - actualExpense,
+      'planned_income': plannedIncome,
+      'planned_expense': plannedExpense,
+      'planned_net': plannedIncome - plannedExpense,
+      'total_known_income': actualIncome + plannedIncome,
+      'total_known_expense': actualExpense + plannedExpense,
+      'total_known_net':
+          actualIncome + plannedIncome - actualExpense - plannedExpense,
+      'analysis_income': analysisIncome,
+      'analysis_expense': analysisExpense,
+      'analysis_net': analysisIncome - analysisExpense,
+    };
+  }
+
+  static List<Map<String, dynamic>> _categorySummary(
+    FinanceRepository repository, {
+    required CategoryType type,
+    required List<String> monthKeys,
+    required bool includePlanned,
+    required int divisor,
+  }) {
+    final actual = _categoryTotals(
+      repository,
+      type: type,
+      monthKeys: monthKeys,
+      includePlanned: false,
+    );
+    final planned = _categoryTotals(
+      repository,
+      type: type,
+      monthKeys: monthKeys,
+      plannedOnly: true,
+    );
+    final categoryIds = <String>{...actual.keys, ...planned.keys};
+    final rows = <Map<String, dynamic>>[];
+    for (final categoryId in categoryIds) {
+      final actualTotal = actual[categoryId] ?? 0;
+      final plannedTotal = planned[categoryId] ?? 0;
+      final total = actualTotal + (includePlanned ? plannedTotal : 0);
+      if (total == 0 && plannedTotal == 0 && actualTotal == 0) {
+        continue;
+      }
+      rows.add({
+        'name': _categoryName(repository, categoryId),
+        'total': total,
+        'actual_total': actualTotal,
+        'planned_total': plannedTotal,
+        'monthly_avg': divisor <= 0 ? total : total / divisor,
+      });
+    }
+    rows.sort(
+      (a, b) => (b['total'] as double).compareTo(a['total'] as double),
+    );
+    return rows;
+  }
+
+  static Map<String, double> _categoryTotals(
+    FinanceRepository repository, {
+    required CategoryType type,
+    required List<String> monthKeys,
+    bool includePlanned = true,
+    bool plannedOnly = false,
+  }) {
+    final allowedIds = repository.categories
+        .where((category) => category.type == type)
+        .map((category) => category.id)
+        .toSet();
+    final totals = <String, double>{};
+    for (final transaction in repository.transactions) {
+      final categoryId = transaction.categoryId;
+      if (categoryId == null || !allowedIds.contains(categoryId)) {
+        continue;
+      }
+      if (!monthKeys.contains(monthKeyFromDate(transaction.transactionDate))) {
+        continue;
+      }
+      if (plannedOnly && transaction.status != TransactionStatus.planned) {
+        continue;
+      }
+      if (!includePlanned && transaction.status == TransactionStatus.planned) {
+        continue;
+      }
+      if (type == CategoryType.expense &&
+          transaction.type != TransactionType.expense) {
+        continue;
+      }
+      if (type == CategoryType.income &&
+          transaction.type != TransactionType.income) {
+        continue;
+      }
+      totals[categoryId] = (totals[categoryId] ?? 0) +
+          repository.transactionAmountInBase(transaction);
+    }
+    return totals;
+  }
+
+  static List<Map<String, dynamic>> _budgetRowsForMonth(
+    FinanceRepository repository,
+    String monthKey,
+  ) {
+    return repository.activeBudgetsForMonth(monthKey).map((budget) {
+      final effective = repository.effectiveBudgetForMonth(budget, monthKey);
+      final actualSpent =
+          repository.expenseTotalForCategory(budget.categoryId, monthKey);
+      final plannedSpent = repository.plannedExpenseTotalForCategory(
+        budget.categoryId,
+        monthKey,
+      );
+      final committed = actualSpent + plannedSpent;
+      return {
+        'category': _categoryName(repository, budget.categoryId),
+        'budget': effective,
+        'spent': actualSpent,
+        'actual_spent': actualSpent,
+        'planned_spent': plannedSpent,
+        'committed_spend': committed,
+        'remaining_after_actual': effective - actualSpent,
+        'remaining_after_committed': effective - committed,
+        'rollover_enabled': budget.rolloverEnabled,
+        'alert_threshold': budget.alertThreshold,
+      };
+    }).toList();
+  }
+
+  static List<Map<String, dynamic>> _transactionsInWindow(
+    FinanceRepository repository, {
+    DateTime? startDateExclusive,
+    required DateTime endDateInclusive,
+    int limit = 80,
+    bool descending = false,
+    bool actualOnly = false,
+  }) {
+    final items = repository.transactions.where((transaction) {
+      if (actualOnly && transaction.status == TransactionStatus.planned) {
+        return false;
+      }
+      if (startDateExclusive != null &&
+          !transaction.transactionDate.isAfter(startDateExclusive)) {
+        return false;
+      }
+      if (transaction.transactionDate.isAfter(endDateInclusive)) {
+        return false;
+      }
+      return true;
+    }).toList()
+      ..sort(
+        (a, b) => descending
+            ? b.transactionDate.compareTo(a.transactionDate)
+            : a.transactionDate.compareTo(b.transactionDate),
+      );
+    return items
+        .take(limit)
+        .map((item) => _transactionRow(repository, item))
+        .toList();
+  }
+
+  static Map<String, dynamic> _transactionRow(
+    FinanceRepository repository,
+    FinanceTransaction transaction,
+  ) {
+    return {
+      'date': _dateText(transaction.transactionDate),
+      'month': monthKeyFromDate(transaction.transactionDate),
+      'type': transaction.type.name,
+      'status': transaction.status.name,
+      'is_planned': transaction.status == TransactionStatus.planned,
+      'is_recurring_instance': transaction.recurringRuleId != null,
+      'recurring_rule_id': transaction.recurringRuleId,
+      'account': _accountName(repository, transaction.accountId),
+      'to_account': transaction.toAccountId == null
+          ? null
+          : _accountName(repository, transaction.toAccountId!),
+      'category': _categoryName(repository, transaction.categoryId),
+      'amount': transaction.amount,
+      'currency': transaction.currency,
+      'amount_base': repository.transactionAmountInBase(transaction),
+      'to_amount': transaction.toAmount,
+      'to_currency': transaction.toCurrency,
+      'description': transaction.description,
+      'merchant': transaction.merchant,
+    };
+  }
+
+  static Map<String, dynamic> _recurringRuleRow(
+    FinanceRepository repository,
+    RecurringTransactionRule rule, {
+    required DateTime now,
+    required int futureMonthCount,
+  }) {
+    return {
+      'id': rule.id,
+      'name': rule.name,
+      'type': rule.type.name,
+      'status_when_generated': rule.status.name,
+      'is_active': rule.isActive,
+      'account': _accountName(repository, rule.accountId),
+      'to_account': rule.toAccountId == null
+          ? null
+          : _accountName(repository, rule.toAccountId!),
+      'category': _categoryName(repository, rule.categoryId),
+      'amount': rule.amount,
+      'currency': rule.currency,
+      'amount_base': repository.convertToBase(rule.amount, rule.currency),
+      'to_amount': rule.toAmount,
+      'to_currency': rule.toCurrency,
+      'interval_months': rule.intervalMonths,
+      'start_date': _dateText(rule.startDate),
+      'end_date': rule.endDate == null ? null : _dateText(rule.endDate!),
+      'generated_month_keys': rule.generatedMonthKeys,
+      'next_occurrences': _nextRecurringOccurrences(
+        rule,
+        now: now,
+        futureMonthCount: futureMonthCount,
+      ),
+    };
+  }
+
+  static List<Map<String, dynamic>> _nextRecurringOccurrences(
+    RecurringTransactionRule rule, {
+    required DateTime now,
+    required int futureMonthCount,
+  }) {
+    if (!rule.isActive) {
+      return const [];
+    }
+    final today = DateTime(now.year, now.month, now.day);
+    final endDate = DateTime(now.year, now.month + futureMonthCount + 1, 0);
+    final rows = <Map<String, dynamic>>[];
+    var cursor = DateTime(
+      rule.startDate.year,
+      rule.startDate.month,
+      rule.startDate.day,
+    );
+    var guard = 0;
+    while (!cursor.isAfter(endDate) && guard++ < 240) {
+      if (cursor.isAfter(today) &&
+          (rule.endDate == null || !cursor.isAfter(rule.endDate!))) {
+        final occurrenceMonthKey = monthKeyFromDate(cursor);
+        rows.add({
+          'date': _dateText(cursor),
+          'month': occurrenceMonthKey,
+          'already_generated_as_transaction':
+              rule.generatedMonthKeys.contains(occurrenceMonthKey),
+        });
+      }
+      cursor = DateTime(
+        cursor.year,
+        cursor.month + rule.intervalMonths,
+        cursor.day,
+      );
+    }
+    return rows;
+  }
+
+  static String _categoryName(
+      FinanceRepository repository, String? categoryId) {
+    if (categoryId == null) {
+      return '未分类';
+    }
+    for (final category in repository.categories) {
+      if (category.id == categoryId) {
+        return category.name;
+      }
+    }
+    return '未命名类别';
+  }
+
+  static String _accountName(FinanceRepository repository, String accountId) {
+    for (final account in repository.accounts) {
+      if (account.id == accountId) {
+        return account.name;
+      }
+    }
+    return '未知账户';
+  }
+
+  static String _dateText(DateTime date) {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
   }
 }
 
