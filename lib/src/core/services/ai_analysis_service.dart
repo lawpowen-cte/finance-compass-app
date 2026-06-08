@@ -14,30 +14,32 @@ class AiAnalysisService {
   static const defaultFutureMonthCount = 6;
 
   static const financeAnalysisSystemPrompt = '''
-你是一个专业、谨慎的个人财务分析师。请根据用户提供的 Finance Compass 财务 JSON，给出简洁但有行动价值的分析。
+你是一位专业、谨慎、重视事实口径的个人财务分析师。请只根据用户提供的 Finance Compass JSON 给出简洁但有行动价值的分析。
 
 输出要求：
 - 使用简体中文。
 - 输出纯文字，不要 HTML，不要代码块。
 - 金额使用 JSON 的 base_currency 作为货币前缀，保留 2 位小数。
-- 必须区分“已发生 actual”和“预计/计划 planned”，不要把未来 planned 当成已经发生。
-- 未来推演不要只用历史均值。请优先使用 future_transactions、monthly_actual_planned、cash_flow_projection、budgets_by_month 和 recurring_transaction_rules 中已经记录的未来预计数据；历史趋势只在未来数据缺失时补足，并说明这是估算。
-- 如果周期规则已经生成了未来 planned 交易，不要重复计算；周期规则主要用于解释固定收支来源，或补足尚未生成的后续月份。
-- 不要编造 JSON 中没有的数据；数据不足时明确写出假设。
+- 必须区分 actual（已发生）与 planned（预计/计划），不要把 planned 当作已经发生。
+- 先用 JSON 已计算好的汇总字段和 cash_flow_projection，再引用交易明细解释原因。
+- 未来推演优先使用 future_transactions、monthly_actual_planned、future_monthly_actual_planned、cash_flow_projection、budgets_by_month 和 recurring_transaction_rules；历史均值只能在未来数据缺失时补足，并明确标为估算。
+- 如果 recurring_transaction_rules 已经生成了未来 planned 交易，不要重复计算；规则主要用于解释固定收支来源，或补足尚未生成的后续月份。
+- 不要编造 JSON 中没有的数据；数据不足时明确写出假设和置信度。
+- 避免泛泛而谈，每条建议都要指向具体月份、账户、类别或金额区间。
 
 必须包含：
-📊 财务总结
-- 本月 actual 与 planned 合并后的收支情况，同时说明 actual 已发生部分。
+财务总结
+- 本月 actual 与 planned 的分别和合计情况，同时说明本月已发生部分是否足够代表全月。
 - 与上月对比的收入、支出、结余变化。
 - 资产分布、现金/信用卡压力、预算执行亮点或风险。
-- 整体财务健康度，用一句话给出判断。
+- 用一句话判断整体财务健康度，并给出置信度。
 
-🔮 未来推演
-- 按 future_months 逐月推演：预计收入、预计支出、预计结余、月底现金/信用压力。
+未来推演
+- 按 future_months 逐月说明预计收入、预计支出、预计结余、月末现金/信用压力。
 - 先引用已记录的 future planned/recurring 数据，再用历史均值补空白月份。
-- 标出未来 1-2 个最需要注意的月份或类别。
+- 标出未来 1-2 个最需要注意的月份、账户或类别。
 
-✅ 建议
+建议
 - 给出 3-5 条具体行动，优先关注现金流、预算、即将到来的大额支出、可减少的类别。
 ''';
 
@@ -118,6 +120,7 @@ class AiAnalysisService {
     final today = DateTime(now.year, now.month, now.day);
     final currentMonth = monthKeyFromDate(now);
     final lastMonth = monthKeyFromDate(DateTime(now.year, now.month - 1));
+    final daysInCurrentMonth = DateTime(now.year, now.month + 1, 0).day;
     final historyMonthKeys = recentMonthKeys(count: monthCount, anchor: now);
     final futureMonthKeys = List.generate(
       futureMonthCount,
@@ -276,12 +279,39 @@ class AiAnalysisService {
           },
         )
         .toList();
+    final futureMonthsWithKnownData = futureMonthRows
+        .where((item) => _monthHasKnownFutureData(item))
+        .map((item) => item['month'])
+        .toList();
+    final budgetRiskRows = _budgetRiskRows(budgetsByMonth);
 
     return {
-      'schema_version': 2,
-      'prompt_version': 'finance_compass_current_future_v1',
+      'schema_version': 3,
+      'prompt_version': 'finance_compass_current_future_v2',
       'generated_at': DateTime.now().toIso8601String(),
       'base_currency': repository.baseCurrency,
+      'analysis_contract': {
+        'actual': 'completed or settled records that affect real balances',
+        'planned':
+            'user-entered estimates that should not be treated as completed cash flow',
+        'analysis_income': includePlanned
+            ? 'actual_income plus planned_income'
+            : 'actual_income only',
+        'analysis_expense': includePlanned
+            ? 'actual_expense plus planned_expense'
+            : 'actual_expense only',
+        'cash_flow_projection':
+            'cash and credit pressure projection; this is not total net worth',
+        'recommended_source_order': [
+          'current_month and last_month summaries',
+          'cash_flow_projection',
+          'future_monthly_actual_planned',
+          'future_transactions',
+          'budgets_by_month',
+          'recurring_transaction_rules',
+          'recent_actual_transactions',
+        ],
+      },
       'data_mode': includePlanned ? 'all' : 'actual',
       'data_mode_note': includePlanned
           ? 'analysis fields include actual plus planned records; actual/planned remain separated'
@@ -289,6 +319,10 @@ class AiAnalysisService {
       'month_count': monthCount,
       'future_month_count': futureMonthCount,
       'current_month_key': currentMonth,
+      'current_day_of_month': today.day,
+      'days_in_current_month': daysInCurrentMonth,
+      'current_month_elapsed_ratio':
+          double.parse((today.day / daysInCurrentMonth).toStringAsFixed(2)),
       'history_months': historyMonthKeys,
       'future_months': futureMonthKeys,
       'analysis_months': analysisMonthKeys,
@@ -333,6 +367,19 @@ class AiAnalysisService {
       'future_transactions': futureTransactions,
       'recent_actual_transactions': recentActualTransactions,
       'recurring_transaction_rules': recurringRules,
+      'budget_risks': budgetRiskRows,
+      'data_quality': {
+        'future_months_requested': futureMonthCount,
+        'future_months_with_known_planned_data':
+            futureMonthsWithKnownData.length,
+        'future_months_missing_known_planned_data':
+            futureMonthCount - futureMonthsWithKnownData.length,
+        'future_months_with_known_planned_data_keys': futureMonthsWithKnownData,
+        'future_transactions_count': futureTransactions.length,
+        'recurring_rules_count': recurringRules.length,
+        'recent_actual_transactions_count': recentActualTransactions.length,
+        'budget_risk_count': budgetRiskRows.length,
+      },
       'recent_months': recentMonthsForGateway,
       'analysis_notes': [
         'planned transactions are user-entered estimates, not completed cash flow',
@@ -350,20 +397,22 @@ class AiAnalysisService {
     return '''
 $financeAnalysisSystemPrompt
 
-请分析下面的 Finance Compass JSON。重点是解析当前财务状态和未来 $futureMonthCount 个月可能情况。
+请分析下面的 Finance Compass JSON。重点是解释当前财务状态和未来 $futureMonthCount 个月可能情况。
 
 请特别注意：
 1. base_currency 是 $baseCurrency，所有 *_base 或汇总金额都已折算到该货币。
-2. monthly_actual_planned 同时包含历史、当前、未来月份；period=future 的月份通常主要来自 planned 记录。
-3. future_transactions 是用户已经提前记录的未来交易，其中 recurring_rule_id 不为空的记录通常来自周期交易规则。
-4. recurring_transaction_rules 是固定收入/支出/转账规则；如果对应月份已经有 future_transactions，请用交易金额，不要重复加一次规则金额。
-5. budgets_by_month 反映当前月和未来月预算，remaining_after_committed 可以用于判断预算压力。
-6. cash_flow_projection 是基于现金和信用账户的未来现金流压力，不等同于总资产。
+2. analysis_contract 是本次分析口径，必须优先遵守。
+3. monthly_actual_planned 同时包含历史、当前、未来月份；period=future 的月份通常主要来自 planned 记录。
+4. future_transactions 是用户已经提前记录的未来交易，其中 recurring_rule_id 不为空的记录通常来自周期交易规则。
+5. recurring_transaction_rules 是固定收入/支出/转账规则；如果对应月份已经有 future_transactions，请用交易金额，不要重复加一次规则金额。
+6. budgets_by_month 反映当前月和未来月预算，remaining_after_committed 可以用于判断预算压力。
+7. cash_flow_projection 是基于现金和信用账户的未来现金流压力，不等同于总资产。
+8. data_quality 描述未来计划数据覆盖度；覆盖不足时，请降低推演置信度并说明假设。
 
 请按这个顺序输出：
-📊 财务总结
-🔮 未来$futureMonthCount个月推演
-✅ 建议
+财务总结
+未来 $futureMonthCount 个月推演
+建议
 ''';
   }
 
@@ -387,6 +436,8 @@ $prompt
 ---BEGIN_FINANCE_COMPASS_JSON---
 $jsonText
 ---END_FINANCE_COMPASS_JSON---
+
+请直接根据上面的 JSON 分析；如果你无法读取附件或外部文件，请优先使用这段内嵌 JSON。
 ''';
   }
 
@@ -424,6 +475,40 @@ $jsonText
       'analysis_expense': analysisExpense,
       'analysis_net': analysisIncome - analysisExpense,
     };
+  }
+
+  static bool _monthHasKnownFutureData(Map<String, dynamic> row) {
+    return (row['planned_income'] as double) != 0 ||
+        (row['planned_expense'] as double) != 0 ||
+        (row['actual_income'] as double) != 0 ||
+        (row['actual_expense'] as double) != 0;
+  }
+
+  static List<Map<String, dynamic>> _budgetRiskRows(
+    Map<String, List<Map<String, dynamic>>> budgetsByMonth,
+  ) {
+    final rows = <Map<String, dynamic>>[];
+    for (final entry in budgetsByMonth.entries) {
+      for (final budget in entry.value) {
+        final remaining =
+            (budget['remaining_after_committed'] as num).toDouble();
+        if (remaining >= 0) {
+          continue;
+        }
+        rows.add({
+          'month': entry.key,
+          'category': budget['category'],
+          'budget': (budget['budget'] as num).toDouble(),
+          'committed_spend': (budget['committed_spend'] as num).toDouble(),
+          'over_budget_by': -remaining,
+        });
+      }
+    }
+    rows.sort(
+      (a, b) => (b['over_budget_by'] as double)
+          .compareTo(a['over_budget_by'] as double),
+    );
+    return rows.take(12).toList();
   }
 
   static List<Map<String, dynamic>> _categorySummary(

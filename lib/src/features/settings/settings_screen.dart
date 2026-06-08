@@ -585,8 +585,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   _SettingsActionRow(
                     icon: Icons.auto_awesome_outlined,
                     title: '跳转 AI 分析',
-                    subtitle:
-                        '发送完整 prompt、当前财务 JSON 和未来计划数据到 ChatGPT 等手机 AI App',
+                    subtitle: '分享 AI 分析 prompt；JSON 文件请先导出后在 AI App 内自行上传',
                     action: FilledButton.icon(
                       onPressed: _isBusy ? null : _shareExternalAiAnalysis,
                       icon: const Icon(Icons.ios_share_outlined),

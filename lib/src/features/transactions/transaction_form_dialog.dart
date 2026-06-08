@@ -142,27 +142,12 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                   },
                 ),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<TransactionStatus>(
+                _StatusSwitch(
                   value: transactionStatus,
-                  decoration: const InputDecoration(
-                    labelText: '状态',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    TransactionStatus.planned,
-                    TransactionStatus.actual,
-                  ]
-                      .map((status) => DropdownMenuItem(
-                            value: status,
-                            child: Text(_statusLabel(status)),
-                          ))
-                      .toList(),
-                  onChanged: (value) {
-                    if (value == null) {
-                      return;
-                    }
-                    setState(() => transactionStatus = value);
-                  },
+                  plannedLabel: _statusLabel(TransactionStatus.planned),
+                  actualLabel: _statusLabel(TransactionStatus.actual),
+                  onChanged: (value) =>
+                      setState(() => transactionStatus = value),
                 ),
                 const SizedBox(height: 8),
                 Align(
@@ -709,6 +694,113 @@ class TransactionFormResult {
   });
 
   final List<FinanceTransaction> transactions;
+}
+
+class _StatusSwitch extends StatelessWidget {
+  const _StatusSwitch({
+    required this.value,
+    required this.plannedLabel,
+    required this.actualLabel,
+    required this.onChanged,
+  });
+
+  final TransactionStatus value;
+  final String plannedLabel;
+  final String actualLabel;
+  final ValueChanged<TransactionStatus> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final borderColor = colorScheme.outline.withValues(alpha: 0.55);
+
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: '状态',
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+        contentPadding: const EdgeInsets.all(4),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _StatusSwitchOption(
+              label: plannedLabel,
+              selected: value == TransactionStatus.planned,
+              borderRadius: const BorderRadius.horizontal(
+                left: Radius.circular(7),
+              ),
+              borderColor: borderColor,
+              onTap: () => onChanged(TransactionStatus.planned),
+            ),
+          ),
+          Expanded(
+            child: _StatusSwitchOption(
+              label: actualLabel,
+              selected: value != TransactionStatus.planned,
+              borderRadius: const BorderRadius.horizontal(
+                right: Radius.circular(7),
+              ),
+              borderColor: borderColor,
+              onTap: () => onChanged(TransactionStatus.actual),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusSwitchOption extends StatelessWidget {
+  const _StatusSwitchOption({
+    required this.label,
+    required this.selected,
+    required this.borderRadius,
+    required this.borderColor,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final BorderRadius borderRadius;
+  final Color borderColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Material(
+      color: selected ? colorScheme.primaryContainer : Colors.transparent,
+      borderRadius: borderRadius,
+      child: InkWell(
+        borderRadius: borderRadius,
+        onTap: onTap,
+        child: Container(
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: borderRadius,
+            border: Border.all(
+              color: selected ? colorScheme.primary : borderColor,
+              width: selected ? 1.4 : 0.8,
+            ),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: selected
+                  ? colorScheme.onPrimaryContainer
+                  : colorScheme.onSurfaceVariant,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 List<FinanceTransaction> buildRecurringTransactions({
