@@ -79,7 +79,7 @@ class FinanceMetricCard extends StatelessWidget {
       padding: padding,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        color: theme.cardColor,
+        color: theme.colorScheme.surface,
         border: Border.all(
           color: metricColor.withValues(alpha: 0.22),
           width: 1,
