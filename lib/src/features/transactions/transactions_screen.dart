@@ -4,13 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/models/category.dart';
 import '../../core/models/transaction.dart';
-import '../../core/providers/mutations/category_mutations.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/month_key.dart';
 import '../../core/utils/month_range.dart';
-import '../categories/category_form_dialog.dart';
+import '../categories/category_manage_screen.dart';
 import '../shared/finance_action_menu_button.dart';
 import '../shared/finance_filter_bar.dart';
 import '../shared/finance_metric_card.dart';
@@ -228,56 +227,14 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        if (_isSelectionMode)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                IconButton(
-                  onPressed: _exitSelectionMode,
-                  icon: const Icon(Icons.close),
-                  tooltip: '取消',
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '已选择 ${_selectedTransactionIds.length} 笔',
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => _selectAll(
-                    filteredTransactions.map((t) => t.id).toList(),
-                  ),
-                  child: Text(
-                    _selectedTransactionIds.length == filteredTransactions.length
-                        ? '取消全选'
-                        : '全选',
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: _selectedTransactionIds.isNotEmpty
-                      ? () => _batchDeleteTransactions(context)
-                      : null,
-                  icon: const Icon(Icons.delete_outline),
-                  label: const Text('删除'),
-                ),
-              ],
-            ),
-          ),
         if (!_isSelectionMode)
           ScreenHeader(
             title: '交易',
             actions: [
               IconButton.filledTonal(
-                onPressed: () => _showAddCategory(context),
+                onPressed: () => _showCategoryManage(context),
                 icon: const Icon(Icons.category_outlined),
-                tooltip: '新增类别',
+                tooltip: '类别管理',
               ),
               const SizedBox(width: 8),
               IconButton.filled(
@@ -629,76 +586,49 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        SectionCard(
-          title: '类别管理',
-          subtitle: '低频维护区，日常记账可保持收起',
-          child: Column(
-            children: [
-              InkWell(
-                borderRadius: BorderRadius.circular(14),
-                onTap: () => setState(() => showCategories = !showCategories),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    children: [
-                      Expanded(child: Text(showCategories ? '收起类别' : '展开类别')),
-                      Icon(showCategories
-                          ? Icons.expand_less
-                          : Icons.expand_more),
-                    ],
+        if (_isSelectionMode)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primaryContainer,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: _exitSelectionMode,
+                  icon: const Icon(Icons.close),
+                  tooltip: '取消',
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '已选择 ${_selectedTransactionIds.length} 笔',
+                    style: Theme.of(context).textTheme.titleSmall,
                   ),
                 ),
-              ),
-              if (showCategories) ...[
-                const SizedBox(height: 12),
-                ...visibleCategories.map((category) {
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 12),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      color:
-                          Theme.of(context).cardColor.withValues(alpha: 0.86),
-                      border: Border.all(color: Theme.of(context).cardColor),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                category.name,
-                                style: Theme.of(context).textTheme.titleSmall,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _categoryTypeLabel(category.type),
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => _showEditCategory(context, category),
-                          icon: const Icon(Icons.edit_outlined),
-                          tooltip: '编辑类别',
-                        ),
-                        IconButton(
-                          onPressed: () => _deleteCategory(context, category),
-                          icon: const Icon(Icons.delete_outline),
-                          tooltip: '删除类别',
-                        ),
-                      ],
-                    ),
-                  );
-                }),
+                TextButton(
+                  onPressed: () => _selectAll(
+                    filteredTransactions.map((t) => t.id).toList(),
+                  ),
+                  child: Text(
+                    _selectedTransactionIds.length == filteredTransactions.length
+                        ? '取消全选'
+                        : '全选',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _selectedTransactionIds.isNotEmpty
+                      ? () => _batchDeleteTransactions(context)
+                      : null,
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('删除'),
+                ),
               ],
-            ],
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
+        if (_isSelectionMode) const SizedBox(height: 8),
         SectionCard(
           title: '交易列表',
           subtitle: '共 ${filteredTransactions.length} 笔',
@@ -726,13 +656,14 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                           borderRadius: BorderRadius.circular(10),
                           color: isSelected
                               ? Theme.of(context).colorScheme.primaryContainer
-                              : Theme.of(context).cardColor,
+                              : Theme.of(context).colorScheme.surface,
                           border: Border.all(
                             color: isSelected
                                 ? Theme.of(context).colorScheme.primary
                                 : Theme.of(context)
-                                    .dividerColor
-                                    .withValues(alpha: 0.35),
+                                    .colorScheme
+                                    .outlineVariant
+                                    .withValues(alpha: 0.4),
                             width: isSelected ? 1.5 : 0.6,
                           ),
                         ),
@@ -1032,21 +963,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     }
   }
 
-  Future<void> _deleteCategory(BuildContext context, Category category) async {
-    final deleted = await ref
-        .read(categoryMutationsProvider.notifier)
-        .deleteCategory(category.id);
-    if (!context.mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          deleted ? '类别已删除' : '该类别已关联预算或交易，不能删除',
-        ),
-      ),
-    );
-  }
+
 
   Future<void> _deleteTransactionTemplate(
       BuildContext context, String templateId) async {
@@ -1479,29 +1396,12 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     }
   }
 
-  Future<void> _showAddCategory(BuildContext context) async {
-    final result = await showDialog<CategoryFormResult>(
-      context: context,
-      builder: (_) => const CategoryFormDialog(),
+  Future<void> _showCategoryManage(BuildContext context) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CategoryManageScreen(repository: widget.repository),
+      ),
     );
-    if (result != null) {
-      await ref
-          .read(categoryMutationsProvider.notifier)
-          .addCategory(result.category);
-    }
-  }
-
-  Future<void> _showEditCategory(
-      BuildContext context, Category category) async {
-    final result = await showDialog<CategoryFormResult>(
-      context: context,
-      builder: (_) => CategoryFormDialog(initialCategory: category),
-    );
-    if (result != null) {
-      await ref
-          .read(categoryMutationsProvider.notifier)
-          .updateCategory(result.category);
-    }
   }
 
   String _displayAmount(FinanceTransaction transaction) {

@@ -399,10 +399,10 @@ class _BudgetTile extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: theme.cardColor,
+        color: theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: theme.dividerColor.withValues(alpha: 0.35),
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
           width: 0.8,
         ),
         boxShadow: const [
