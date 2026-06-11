@@ -13,6 +13,9 @@ import '../../core/utils/month_range.dart';
 import '../shared/finance_metric_card.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
+import '../../core/theme/finance_colors.dart';
+import '../../core/models/category.dart';
+import '../shared/simple_charts.dart';
 
 enum ReportRangeType { last3Months, last6Months, last12Months, currentYear }
 
@@ -136,10 +139,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
               children: goalSummaries.map((g) {
                 final pct = g.progressRatio * 100;
                 final color = pct >= 100
-                    ? const Color(0xFF6AAF8A)
+                    ? FinanceColors.incomeSoft
                     : pct >= 50
-                        ? const Color(0xFF5B9BD5)
-                        : const Color(0xFFE8A838);
+                        ? FinanceColors.info
+                        : FinanceColors.retirement;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Column(
@@ -234,10 +237,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                 final ratio = effective > 0 ? spent / effective : 0.0;
                 final isOver = ratio > 1.0;
                 final color = isOver
-                    ? const Color(0xFFE07B7B)
+                    ? FinanceColors.budgetOver
                     : ratio > 0.8
-                        ? const Color(0xFFE8A838)
-                        : const Color(0xFF6AAF8A);
+                        ? FinanceColors.budgetWarning
+                        : FinanceColors.budgetSafe;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Column(
@@ -275,6 +278,27 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
               }),
             ],
           ),
+        ),
+        const SizedBox(height: 16),
+
+        // ── 支出分类明细 ──
+        SectionCard(
+          title: '支出分类',
+          subtitle: measureMode == ReportMeasureMode.cumulative
+              ? '${_rangeLabel(rangeType)}累计'
+              : '$currentMonthKey 本月',
+          child: _ExpenseCategoryBreakdown(
+            repository: repository,
+            monthKeys: includePlanned ? monthKeys : [currentMonthKey],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // ── 资产趋势线 ──
+        SectionCard(
+          title: '资产趋势',
+          subtitle: '净资产走势',
+          child: _AssetTrendLine(repository: repository),
         ),
         const SizedBox(height: 16),
       ],
@@ -792,10 +816,10 @@ class _AssetDistributionPieChart extends StatelessWidget {
   final FinanceRepository repository;
 
   static const _groupColors = <ReportGroup, Color>{
-    ReportGroup.cash: Color(0xFF5B9BD5),
-    ReportGroup.credit: Color(0xFFE07B7B),
-    ReportGroup.investment: Color(0xFF6AAF8A),
-    ReportGroup.retirement: Color(0xFFE8A838),
+    ReportGroup.cash: FinanceColors.cash,
+    ReportGroup.credit: FinanceColors.credit,
+    ReportGroup.investment: FinanceColors.investment,
+    ReportGroup.retirement: FinanceColors.retirement,
   };
 
   @override
@@ -1218,6 +1242,134 @@ class _AiAnalysisButton extends ConsumerWidget {
       style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(vertical: 10),
       ),
+    );
+  }
+}
+
+class _ExpenseCategoryBreakdown extends StatelessWidget {
+  const _ExpenseCategoryBreakdown({
+    required this.repository,
+    required this.monthKeys,
+  });
+
+  final FinanceRepository repository;
+  final List<String> monthKeys;
+
+  @override
+  Widget build(BuildContext context) {
+    final categoryTotals = repository.categoryTotalsForMonths(
+      type: CategoryType.expense,
+      monthKeys: monthKeys,
+    );
+
+    if (categoryTotals.isEmpty) {
+      return const Text('暂无支出数据', style: TextStyle(color: Colors.grey));
+    }
+
+    final sortedEntries = categoryTotals.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final totalExpense = sortedEntries.fold<double>(0, (sum, e) => sum + e.value);
+
+    final colors = [
+      const Color(0xFF5B9BD5),
+      const Color(0xFF6AAF8A),
+      const Color(0xFFE8A838),
+      const Color(0xFFE07B7B),
+      const Color(0xFF9B59B6),
+      const Color(0xFF1ABC9C),
+      const Color(0xFFE67E22),
+      const Color(0xFF3498DB),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ...sortedEntries.take(10).toList().asMap().entries.map((entry) {
+          final index = entry.key;
+          final categoryTotal = entry.value;
+          final categoryName = repository.categoryName(categoryTotal.key);
+          final amount = categoryTotal.value;
+          final percentage = totalExpense > 0 ? (amount / totalExpense * 100) : 0.0;
+          final color = colors[index % colors.length];
+
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        categoryName,
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                    Text(
+                      '${formatMoney(amount)} (${percentage.toStringAsFixed(1)}%)',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: (percentage / 100).clamp(0.0, 1.0),
+                    backgroundColor: Colors.grey[200],
+                    valueColor: AlwaysStoppedAnimation(color),
+                    minHeight: 5,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+        if (sortedEntries.length > 10)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '...还有 ${sortedEntries.length - 10} 个类别',
+              style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _AssetTrendLine extends StatelessWidget {
+  const _AssetTrendLine({required this.repository});
+
+  final FinanceRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    final history = repository.totalAssetHistory();
+
+    if (history.isEmpty) {
+      return const Text('暂无资产数据', style: TextStyle(color: Colors.grey));
+    }
+
+    final points = history
+        .map((point) => ChartPoint(
+              label: point.label,
+              value: point.totalAssets,
+            ))
+        .toList();
+
+    return SimpleLineChart(
+      points: points,
+      amountBuilder: formatMoneyValue,
     );
   }
 }

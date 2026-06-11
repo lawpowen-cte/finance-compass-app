@@ -17,6 +17,7 @@ import '../shared/finance_status_chip.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 import 'transaction_form_dialog.dart';
+import '../../core/theme/finance_colors.dart';
 
 class TransactionsScreen extends ConsumerStatefulWidget {
   const TransactionsScreen({
@@ -561,26 +562,26 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
               FinanceMetricCard(
                 label: '收入',
                 value: formatMoney(totalsByType[TransactionType.income] ?? 0),
-                color: const Color(0xFF15803D),
+                color: FinanceColors.income,
               ),
               FinanceMetricCard(
                 label: '支出',
                 value: formatMoney(totalsByType[TransactionType.expense] ?? 0),
-                color: const Color(0xFFB91C1C),
+                color: FinanceColors.expense,
               ),
               FinanceMetricCard(
                 label: '净现金流',
                 value: formatMoney(netCashFlow),
                 color: netCashFlow >= 0
-                    ? const Color(0xFF15803D)
-                    : const Color(0xFFB91C1C),
+                    ? FinanceColors.income
+                    : FinanceColors.expense,
               ),
               FinanceMetricCard(
                 label: '净现金流（含预计）',
                 value: formatMoney(projectedNetCashFlow),
                 color: projectedNetCashFlow >= 0
-                    ? const Color(0xFF15803D)
-                    : const Color(0xFFB91C1C),
+                    ? FinanceColors.income
+                    : FinanceColors.expense,
               ),
             ],
           ),
@@ -1309,13 +1310,13 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   Color _amountColor(TransactionType type) {
     switch (type) {
       case TransactionType.expense:
-        return const Color(0xFFB91C1C);
+        return FinanceColors.expense;
       case TransactionType.transfer:
-        return const Color(0xFF475569);
+        return FinanceColors.transfer;
       case TransactionType.income:
-        return const Color(0xFF15803D);
+        return FinanceColors.income;
       case TransactionType.adjustment:
-        return const Color(0xFF0369A1);
+        return FinanceColors.adjustment;
     }
   }
 
