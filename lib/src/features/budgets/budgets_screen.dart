@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
+import '../../core/database/database_provider.dart';
 import '../../core/models/budget.dart';
 import '../../core/providers/mutations/budget_mutations.dart';
 
@@ -25,11 +28,105 @@ class BudgetsScreen extends ConsumerStatefulWidget {
 class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
   late String _selectedMonth;
   final _expandedBudgetIds = <String>{};
+  final _collapsedBudgets = <String>{};
+  List<String> _budgetOrder = [];
 
   @override
   void initState() {
     super.initState();
     _selectedMonth = monthKeyFromDate(DateTime.now());
+    _loadCollapsedBudgets();
+    _loadBudgetOrder();
+  }
+
+  Future<void> _loadCollapsedBudgets() async {
+    final raw = await DatabaseProvider.instance.getMetaValue('collapsed_budgets');
+    if (raw != null && mounted) {
+      try {
+        final List<dynamic> decoded = jsonDecode(raw);
+        setState(() {
+          _collapsedBudgets.addAll(decoded.cast<String>());
+        });
+      } catch (_) {
+        // ignore parse errors
+      }
+    }
+  }
+
+  Future<void> _toggleBudgetCollapse(String budgetId) async {
+    setState(() {
+      if (_collapsedBudgets.contains(budgetId)) {
+        _collapsedBudgets.remove(budgetId);
+      } else {
+        _collapsedBudgets.add(budgetId);
+      }
+    });
+    await DatabaseProvider.instance.setMetaValue(
+      'collapsed_budgets',
+      jsonEncode(_collapsedBudgets.toList()),
+    );
+  }
+
+  Future<void> _loadBudgetOrder() async {
+    final raw = await DatabaseProvider.instance.getMetaValue('budget_order');
+    if (raw != null && mounted) {
+      try {
+        final List<dynamic> decoded = jsonDecode(raw);
+        setState(() {
+          _budgetOrder = decoded.cast<String>();
+        });
+      } catch (_) {
+        // ignore parse errors
+      }
+    }
+  }
+
+  Future<void> _saveBudgetOrder(List<String> order) async {
+    setState(() {
+      _budgetOrder = order;
+    });
+    await DatabaseProvider.instance.setMetaValue(
+      'budget_order',
+      jsonEncode(order),
+    );
+  }
+
+  void _reorderBudgets(int oldIndex, int newIndex) {
+    final budgets = widget.repository.activeBudgetsForMonth(_selectedMonth);
+    final budgetIds = budgets.map((b) => b.id).toList();
+    
+    if (oldIndex < newIndex) {
+      newIndex -= 1;
+    }
+    
+    final newOrder = List<String>.from(budgetIds);
+    final item = newOrder.removeAt(oldIndex);
+    newOrder.insert(newIndex, item);
+    
+    _saveBudgetOrder(newOrder);
+  }
+
+  List<Budget> _sortBudgets(List<Budget> budgets) {
+    if (_budgetOrder.isEmpty) return budgets;
+    
+    final sorted = <Budget>[];
+    for (final id in _budgetOrder) {
+      final budget = budgets.firstWhere(
+        (b) => b.id == id,
+        orElse: () => budgets.first,
+      );
+      if (!sorted.contains(budget)) {
+        sorted.add(budget);
+      }
+    }
+    
+    for (final budget in budgets) {
+      if (!sorted.contains(budget)) {
+        sorted.add(budget);
+      }
+    }
+    
+    return sorted;
   }
 
   @override
@@ -124,23 +221,31 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
         ),
         if (budgets.isEmpty)
           const SectionCard(title: '预算列表', child: Text('还没有预算，先新增一笔。')),
-        ...budgets.map(
-          (budget) => _BudgetTile(
-            budget: budget,
-            repository: repository,
-            selectedMonth: _selectedMonth,
-            isExpanded: _expandedBudgetIds.contains(budget.id),
-            onToggleExpanded: () {
-              setState(() {
-                if (!_expandedBudgetIds.remove(budget.id)) {
-                  _expandedBudgetIds.add(budget.id);
-                }
-              });
-            },
-            onEdit: () => _showEditBudget(context, budget),
-            onDelete: () => _confirmDeleteBudget(context, budget),
+        if (budgets.isNotEmpty)
+          ReorderableListView(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            onReorder: _reorderBudgets,
+            children: _sortBudgets(budgets).map(
+              (budget) => _BudgetTile(
+                budget: budget,
+                repository: repository,
+                selectedMonth: _selectedMonth,
+                isExpanded: _expandedBudgetIds.contains(budget.id),
+                isCollapsed: _collapsedBudgets.contains(budget.id),
+                onToggleExpanded: () {
+                  setState(() {
+                    if (!_expandedBudgetIds.remove(budget.id)) {
+                      _expandedBudgetIds.add(budget.id);
+                    }
+                  });
+                },
+                onToggleCollapsed: () => _toggleBudgetCollapse(budget.id),
+                onEdit: () => _showEditBudget(context, budget),
+                onDelete: () => _confirmDeleteBudget(context, budget),
+              ),
+            ).toList(),
           ),
-        ),
       ],
     );
   }
@@ -209,7 +314,9 @@ class _BudgetTile extends StatelessWidget {
     required this.repository,
     required this.selectedMonth,
     required this.isExpanded,
+    required this.isCollapsed,
     required this.onToggleExpanded,
+    required this.onToggleCollapsed,
     required this.onEdit,
     required this.onDelete,
   });
@@ -218,9 +325,24 @@ class _BudgetTile extends StatelessWidget {
   final FinanceRepository repository;
   final String selectedMonth;
   final bool isExpanded;
+  final bool isCollapsed;
   final VoidCallback onToggleExpanded;
+  final VoidCallback onToggleCollapsed;
   final Future<void> Function() onEdit;
   final Future<void> Function() onDelete;
+
+  String _calculateDailyBalance(double balance, String monthKey, String currency) {
+    final now = DateTime.now();
+    final parts = monthKey.split('-');
+    final year = int.parse(parts[0]);
+    final month = int.parse(parts[1]);
+    final daysInMonth = DateTime(year, month + 1, 0).day;
+    final today = now.day;
+    final remainingDays = daysInMonth - today + 1;
+    if (remainingDays <= 0) return formatMoney(0, currency: currency);
+    final dailyAmount = balance / remainingDays;
+    return formatMoney(dailyAmount, currency: currency);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -301,9 +423,13 @@ class _BudgetTile extends StatelessWidget {
               onTap: onToggleExpanded,
               child: Row(
                 children: [
-                  Icon(
-                    isExpanded ? Icons.expand_less : Icons.expand_more,
-                    size: 18,
+                  GestureDetector(
+                    onTap: onToggleCollapsed,
+                    child: Icon(
+                      isCollapsed ? Icons.expand_more : Icons.expand_less,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
                   ),
                   const SizedBox(width: 6),
                   Expanded(
@@ -356,6 +482,12 @@ class _BudgetTile extends StatelessWidget {
                     budget: formatMoney(
                       displayEffectiveBudget,
                       currency: displayCurrency,
+                    ),
+                    isCollapsed: isCollapsed,
+                    dailyBalance: _calculateDailyBalance(
+                      displayMonthlyBalance,
+                      selectedMonth,
+                      displayCurrency,
                     ),
                   ),
                   FinanceActionMenuButton<String>(
@@ -452,10 +584,17 @@ class _BudgetTile extends StatelessWidget {
 }
 
 class _InlineBudgetSummary extends StatelessWidget {
-  const _InlineBudgetSummary({required this.balance, required this.budget});
+  const _InlineBudgetSummary({
+    required this.balance,
+    required this.budget,
+    this.isCollapsed = false,
+    this.dailyBalance,
+  });
 
   final String balance;
   final String budget;
+  final bool isCollapsed;
+  final String? dailyBalance;
 
   @override
   Widget build(BuildContext context) {
@@ -467,22 +606,33 @@ class _InlineBudgetSummary extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.end,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text.rich(
-          TextSpan(
-            text: '余额 ',
-            style: labelStyle,
-            children: [TextSpan(text: balance, style: valueStyle)],
+        if (isCollapsed && dailyBalance != null)
+          Text.rich(
+            TextSpan(
+              text: '可用/天 ',
+              style: labelStyle,
+              children: [TextSpan(text: dailyBalance!, style: valueStyle)],
+            ),
+            textAlign: TextAlign.right,
+          )
+        else ...[
+          Text.rich(
+            TextSpan(
+              text: '余额 ',
+              style: labelStyle,
+              children: [TextSpan(text: balance, style: valueStyle)],
+            ),
+            textAlign: TextAlign.right,
           ),
-          textAlign: TextAlign.right,
-        ),
-        Text.rich(
-          TextSpan(
-            text: '预算 ',
-            style: labelStyle,
-            children: [TextSpan(text: budget, style: valueStyle)],
+          Text.rich(
+            TextSpan(
+              text: '预算 ',
+              style: labelStyle,
+              children: [TextSpan(text: budget, style: valueStyle)],
+            ),
+            textAlign: TextAlign.right,
           ),
-          textAlign: TextAlign.right,
-        ),
+        ],
       ],
     );
   }
