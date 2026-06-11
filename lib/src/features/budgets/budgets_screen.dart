@@ -40,7 +40,8 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
   }
 
   Future<void> _loadCollapsedBudgets() async {
-    final raw = await DatabaseProvider.instance.getMetaValue('collapsed_budgets');
+    final raw =
+        await DatabaseProvider.instance.getMetaValue('collapsed_budgets');
     if (raw != null && mounted) {
       try {
         final List<dynamic> decoded = jsonDecode(raw);
@@ -92,40 +93,39 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
   }
 
   void _reorderBudgets(int oldIndex, int newIndex) {
-    final budgets = widget.repository.activeBudgetsForMonth(_selectedMonth);
+    final budgets = _sortBudgets(
+      widget.repository.activeBudgetsForMonth(_selectedMonth),
+    );
     final budgetIds = budgets.map((b) => b.id).toList();
-    
+
     if (oldIndex < newIndex) {
       newIndex -= 1;
     }
-    
+
     final newOrder = List<String>.from(budgetIds);
     final item = newOrder.removeAt(oldIndex);
     newOrder.insert(newIndex, item);
-    
+
     _saveBudgetOrder(newOrder);
   }
 
   List<Budget> _sortBudgets(List<Budget> budgets) {
-    if (_budgetOrder.isEmpty) return budgets;
-    
+    if (_budgetOrder.isEmpty || budgets.isEmpty) return budgets;
+
     final sorted = <Budget>[];
     for (final id in _budgetOrder) {
-      final budget = budgets.firstWhere(
-        (b) => b.id == id,
-        orElse: () => budgets.first,
-      );
-      if (!sorted.contains(budget)) {
+      final budget = budgets.where((b) => b.id == id).firstOrNull;
+      if (budget != null && !sorted.contains(budget)) {
         sorted.add(budget);
       }
     }
-    
+
     for (final budget in budgets) {
       if (!sorted.contains(budget)) {
         sorted.add(budget);
       }
     }
-    
+
     return sorted;
   }
 
@@ -225,25 +225,32 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
           ReorderableListView(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
+            buildDefaultDragHandles: false,
             onReorder: _reorderBudgets,
-            children: _sortBudgets(budgets).map(
-              (budget) => _BudgetTile(
-                budget: budget,
-                repository: repository,
-                selectedMonth: _selectedMonth,
-                isExpanded: _expandedBudgetIds.contains(budget.id),
-                isCollapsed: _collapsedBudgets.contains(budget.id),
-                onToggleExpanded: () {
-                  setState(() {
-                    if (!_expandedBudgetIds.remove(budget.id)) {
-                      _expandedBudgetIds.add(budget.id);
-                    }
-                  });
-                },
-                onToggleCollapsed: () => _toggleBudgetCollapse(budget.id),
-                onEdit: () => _showEditBudget(context, budget),
-                onDelete: () => _confirmDeleteBudget(context, budget),
-              ),
+            children: _sortBudgets(budgets).asMap().entries.map(
+              (entry) {
+                final index = entry.key;
+                final budget = entry.value;
+                return _BudgetTile(
+                  key: ValueKey('budget-${budget.id}'),
+                  index: index,
+                  budget: budget,
+                  repository: repository,
+                  selectedMonth: _selectedMonth,
+                  isExpanded: _expandedBudgetIds.contains(budget.id),
+                  isCollapsed: _collapsedBudgets.contains(budget.id),
+                  onToggleExpanded: () {
+                    setState(() {
+                      if (!_expandedBudgetIds.remove(budget.id)) {
+                        _expandedBudgetIds.add(budget.id);
+                      }
+                    });
+                  },
+                  onToggleCollapsed: () => _toggleBudgetCollapse(budget.id),
+                  onEdit: () => _showEditBudget(context, budget),
+                  onDelete: () => _confirmDeleteBudget(context, budget),
+                );
+              },
             ).toList(),
           ),
       ],
@@ -310,6 +317,8 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
 
 class _BudgetTile extends StatelessWidget {
   const _BudgetTile({
+    super.key,
+    required this.index,
     required this.budget,
     required this.repository,
     required this.selectedMonth,
@@ -321,6 +330,7 @@ class _BudgetTile extends StatelessWidget {
     required this.onDelete,
   });
 
+  final int index;
   final Budget budget;
   final FinanceRepository repository;
   final String selectedMonth;
@@ -331,7 +341,8 @@ class _BudgetTile extends StatelessWidget {
   final Future<void> Function() onEdit;
   final Future<void> Function() onDelete;
 
-  String _calculateDailyBalance(double balance, String monthKey, String currency) {
+  String _calculateDailyBalance(
+      double balance, String monthKey, String currency) {
     final now = DateTime.now();
     final parts = monthKey.split('-');
     final year = int.parse(parts[0]);
@@ -423,6 +434,15 @@ class _BudgetTile extends StatelessWidget {
               onTap: onToggleExpanded,
               child: Row(
                 children: [
+                  ReorderableDragStartListener(
+                    index: index,
+                    child: Icon(
+                      Icons.drag_handle,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
                   GestureDetector(
                     onTap: onToggleCollapsed,
                     child: Icon(
@@ -557,6 +577,15 @@ class _BudgetTile extends StatelessWidget {
                       currency: displayCurrency,
                     ),
                   ),
+                  FinanceMetricCard(
+                    label: '可用/天',
+                    value: _calculateDailyBalance(
+                      displayMonthlyBalance,
+                      selectedMonth,
+                      displayCurrency,
+                    ),
+                    tone: FinanceMetricTone.success,
+                  ),
                 ],
               ),
               const SizedBox(height: 10),
@@ -606,33 +635,27 @@ class _InlineBudgetSummary extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.end,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (isCollapsed && dailyBalance != null)
-          Text.rich(
-            TextSpan(
-              text: '可用/天 ',
-              style: labelStyle,
-              children: [TextSpan(text: dailyBalance!, style: valueStyle)],
-            ),
-            textAlign: TextAlign.right,
-          )
-        else ...[
-          Text.rich(
-            TextSpan(
-              text: '余额 ',
-              style: labelStyle,
-              children: [TextSpan(text: balance, style: valueStyle)],
-            ),
-            textAlign: TextAlign.right,
+        Text.rich(
+          TextSpan(
+            text: '余额 ',
+            style: labelStyle,
+            children: [TextSpan(text: balance, style: valueStyle)],
           ),
-          Text.rich(
-            TextSpan(
-              text: '预算 ',
-              style: labelStyle,
-              children: [TextSpan(text: budget, style: valueStyle)],
-            ),
-            textAlign: TextAlign.right,
+          textAlign: TextAlign.right,
+        ),
+        Text.rich(
+          TextSpan(
+            text: isCollapsed ? '可用/天 ' : '预算 ',
+            style: labelStyle,
+            children: [
+              TextSpan(
+                text: isCollapsed ? (dailyBalance ?? budget) : budget,
+                style: valueStyle,
+              ),
+            ],
           ),
-        ],
+          textAlign: TextAlign.right,
+        ),
       ],
     );
   }
