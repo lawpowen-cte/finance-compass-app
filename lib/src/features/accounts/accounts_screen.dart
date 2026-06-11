@@ -35,6 +35,7 @@ class AccountsScreen extends ConsumerStatefulWidget {
 class _AccountsScreenState extends ConsumerState<AccountsScreen> {
   String? selectedCutoffMonth = _currentMonthKey();
   final Set<String> _collapsedAccounts = {};
+  final Set<String> _expandedGoalIds = {};
 
   @override
   void initState() {
@@ -206,6 +207,16 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                         padding: const EdgeInsets.only(bottom: 12),
                         child: _GoalCard(
                           summary: summary,
+                          isExpanded:
+                              _expandedGoalIds.contains(summary.goal.id),
+                          onToggleExpanded: summary.isReached
+                              ? null
+                              : () => setState(() {
+                                    if (!_expandedGoalIds
+                                        .remove(summary.goal.id)) {
+                                      _expandedGoalIds.add(summary.goal.id);
+                                    }
+                                  }),
                           onEdit: () => _showGoalDialog(
                             context,
                             initialGoal: summary.goal,
@@ -811,11 +822,15 @@ class _GoalStatusLine extends StatelessWidget {
 class _GoalCard extends StatelessWidget {
   const _GoalCard({
     required this.summary,
+    required this.isExpanded,
+    required this.onToggleExpanded,
     required this.onEdit,
     required this.onDelete,
   });
 
   final AssetGoalProgressSummary summary;
+  final bool isExpanded;
+  final VoidCallback? onToggleExpanded;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
@@ -845,6 +860,16 @@ class _GoalCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (!summary.isReached)
+                IconButton(
+                  onPressed: onToggleExpanded,
+                  icon: Icon(
+                    isExpanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                  ),
+                  tooltip: isExpanded ? '收起' : '展开',
+                ),
               FinanceActionMenuButton<String>(
                 tooltip: '目标操作',
                 items: const [
@@ -870,35 +895,48 @@ class _GoalCard extends StatelessWidget {
               ),
             ],
           ),
-          if (!summary.isReached) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                _MetricChip(
-                  label: '目标金额',
-                  value: formatMoney(summary.goal.targetAmount),
-                ),
-                _MetricChip(
-                  label: '当前净资产',
-                  value: formatMoney(summary.currentAssets),
-                ),
-                _MetricChip(
-                  label: '达成进度',
-                  value: '${(summary.progressRatio * 100).toStringAsFixed(1)}%',
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                minHeight: 10,
-                value: summary.progressRatio.clamp(0, 1),
+          if (!summary.isReached)
+            AnimatedCrossFade(
+              firstChild: const SizedBox.shrink(),
+              secondChild: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      _MetricChip(
+                        label: '目标金额',
+                        value: formatMoney(summary.goal.targetAmount),
+                      ),
+                      _MetricChip(
+                        label: '当前净资产',
+                        value: formatMoney(summary.currentAssets),
+                      ),
+                      _MetricChip(
+                        label: '达成进度',
+                        value:
+                            '${(summary.progressRatio * 100).toStringAsFixed(1)}%',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      minHeight: 10,
+                      value: summary.progressRatio.clamp(0, 1),
+                    ),
+                  ),
+                ],
               ),
+              crossFadeState: isExpanded
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
+              duration: const Duration(milliseconds: 180),
+              sizeCurve: Curves.easeOutCubic,
             ),
-          ],
         ],
       ),
     );

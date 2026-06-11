@@ -153,7 +153,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ReportGroup.retirement,
       settlementEnd,
     );
-    final netAssets =
+    final totalAssets =
         settlementCash + settlementInvestment + settlementRetirement;
 
     final budgetMonthKeys = repository.budgetMonthKeys();
@@ -251,8 +251,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _DashboardKpiGrid(
           items: [
             _DashboardKpiData(
-              label: '累计净资产',
-              amount: netAssets,
+              label: '总资产',
+              amount: totalAssets,
               color: const Color(0xFF5B9BD5),
             ),
             _DashboardKpiData(
