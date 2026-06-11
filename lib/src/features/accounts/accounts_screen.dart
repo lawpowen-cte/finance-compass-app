@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
+import '../../core/database/database_provider.dart';
 import '../../core/models/account.dart';
 import '../../core/models/asset_snapshot.dart';
 import '../../core/providers/mutations/account_mutations.dart';
@@ -31,6 +34,41 @@ class AccountsScreen extends ConsumerStatefulWidget {
 
 class _AccountsScreenState extends ConsumerState<AccountsScreen> {
   String? selectedCutoffMonth = _currentMonthKey();
+  final Set<String> _collapsedAccounts = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCollapsedAccounts();
+  }
+
+  Future<void> _loadCollapsedAccounts() async {
+    final raw = await DatabaseProvider.instance.getMetaValue('collapsed_accounts');
+    if (raw != null && mounted) {
+      try {
+        final List<dynamic> decoded = jsonDecode(raw);
+        setState(() {
+          _collapsedAccounts.addAll(decoded.cast<String>());
+        });
+      } catch (_) {
+        // ignore parse errors
+      }
+    }
+  }
+
+  Future<void> _toggleAccountCollapse(String accountId) async {
+    setState(() {
+      if (_collapsedAccounts.contains(accountId)) {
+        _collapsedAccounts.remove(accountId);
+      } else {
+        _collapsedAccounts.add(accountId);
+      }
+    });
+    await DatabaseProvider.instance.setMetaValue(
+      'collapsed_accounts',
+      jsonEncode(_collapsedAccounts.toList()),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -195,6 +233,7 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                 children: accounts.asMap().entries.map((entry) {
                   final index = entry.key;
                   final account = entry.value;
+                  final isCollapsed = _collapsedAccounts.contains(account.id);
                   final breakdown = repository.expenseBreakdownForAccount(
                     account.id,
                     _currentMonthKey(),
@@ -254,6 +293,17 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              GestureDetector(
+                                onTap: () => _toggleAccountCollapse(account.id),
+                                child: Icon(
+                                  isCollapsed
+                                      ? Icons.expand_more
+                                      : Icons.expand_less,
+                                  size: 20,
+                                  color: Theme.of(context).colorScheme.outline,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -264,24 +314,26 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                                           .textTheme
                                           .titleSmall,
                                     ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '${_accountTypeLabel(account.accountType)} · $topCategory',
-                                      style:
-                                          Theme.of(context).textTheme.bodySmall,
-                                    ),
-                                    const SizedBox(height: 6),
-                                    FinanceStatusChip(
-                                      icon: isReconciledForCutoff
-                                          ? Icons.verified_outlined
-                                          : Icons.pending_actions_outlined,
-                                      label: reconciledMonth == null
-                                          ? '未对账'
-                                          : '已对账到 $reconciledMonth',
-                                      color: isReconciledForCutoff
-                                          ? const Color(0xFF047857)
-                                          : const Color(0xFFB45309),
-                                    ),
+                                    if (!isCollapsed) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '${_accountTypeLabel(account.accountType)} · $topCategory',
+                                        style:
+                                            Theme.of(context).textTheme.bodySmall,
+                                      ),
+                                      const SizedBox(height: 6),
+                                      FinanceStatusChip(
+                                        icon: isReconciledForCutoff
+                                            ? Icons.verified_outlined
+                                            : Icons.pending_actions_outlined,
+                                        label: reconciledMonth == null
+                                            ? '未对账'
+                                            : '已对账到 $reconciledMonth',
+                                        color: isReconciledForCutoff
+                                            ? const Color(0xFF047857)
+                                            : const Color(0xFFB45309),
+                                      ),
+                                    ],
                                   ],
                                 ),
                               ),
@@ -297,53 +349,55 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                                     style:
                                         Theme.of(context).textTheme.titleSmall,
                                   ),
-                                  Text(
-                                    repository.conversionHintForAmount(
-                                      displayedMarketValue,
-                                      account.currency,
+                                  if (!isCollapsed) ...[
+                                    Text(
+                                      repository.conversionHintForAmount(
+                                        displayedMarketValue,
+                                        account.currency,
+                                      ),
+                                      style:
+                                          Theme.of(context).textTheme.labelSmall,
                                     ),
-                                    style:
-                                        Theme.of(context).textTheme.labelSmall,
-                                  ),
-                                  FinanceActionMenuButton<String>(
-                                    tooltip: '账户操作',
-                                    items: const [
-                                      FinanceActionMenuItem(
-                                        value: 'trace',
-                                        label: '数字追溯',
-                                        icon: Icons.manage_search_outlined,
+                                    FinanceActionMenuButton<String>(
+                                      tooltip: '账户操作',
+                                      items: const [
+                                        FinanceActionMenuItem(
+                                          value: 'trace',
+                                          label: '数字追溯',
+                                          icon: Icons.manage_search_outlined,
+                                        ),
+                                        FinanceActionMenuItem(
+                                          value: 'reconcile',
+                                          label: '标记已对账',
+                                          icon: Icons.verified_outlined,
+                                        ),
+                                        FinanceActionMenuItem(
+                                          value: 'edit',
+                                          label: '编辑',
+                                          icon: Icons.edit_outlined,
+                                          dividerBefore: true,
+                                        ),
+                                        FinanceActionMenuItem(
+                                          value: 'delete',
+                                          label: '删除',
+                                          icon: Icons.delete_outline,
+                                          destructive: true,
+                                        ),
+                                      ],
+                                      onSelected: (value) => _handleAccountAction(
+                                        context,
+                                        value,
+                                        account,
+                                        effectiveCutoffMonth,
+                                        displayCutoff,
                                       ),
-                                      FinanceActionMenuItem(
-                                        value: 'reconcile',
-                                        label: '标记已对账',
-                                        icon: Icons.verified_outlined,
-                                      ),
-                                      FinanceActionMenuItem(
-                                        value: 'edit',
-                                        label: '编辑',
-                                        icon: Icons.edit_outlined,
-                                        dividerBefore: true,
-                                      ),
-                                      FinanceActionMenuItem(
-                                        value: 'delete',
-                                        label: '删除',
-                                        icon: Icons.delete_outline,
-                                        destructive: true,
-                                      ),
-                                    ],
-                                    onSelected: (value) => _handleAccountAction(
-                                      context,
-                                      value,
-                                      account,
-                                      effectiveCutoffMonth,
-                                      displayCutoff,
                                     ),
-                                  ),
+                                  ],
                                 ],
                               ),
                             ],
                           ),
-                          if (latestSnapshot != null) ...[
+                          if (!isCollapsed && latestSnapshot != null) ...[
                             const SizedBox(height: 12),
                             _SnapshotSummary(
                               snapshot: latestSnapshot,
@@ -791,15 +845,28 @@ class _GoalCard extends StatelessWidget {
                   ],
                 ),
               ),
-              IconButton(
-                onPressed: onEdit,
-                icon: const Icon(Icons.edit_outlined),
-                tooltip: '编辑',
-              ),
-              IconButton(
-                onPressed: onDelete,
-                icon: const Icon(Icons.delete_outline),
-                tooltip: '删除',
+              FinanceActionMenuButton<String>(
+                tooltip: '目标操作',
+                items: const [
+                  FinanceActionMenuItem(
+                    value: 'edit',
+                    label: '编辑',
+                    icon: Icons.edit_outlined,
+                  ),
+                  FinanceActionMenuItem(
+                    value: 'delete',
+                    label: '删除',
+                    icon: Icons.delete_outline,
+                    destructive: true,
+                  ),
+                ],
+                onSelected: (value) {
+                  if (value == 'edit') {
+                    onEdit();
+                  } else if (value == 'delete') {
+                    onDelete();
+                  }
+                },
               ),
             ],
           ),

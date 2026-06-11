@@ -428,7 +428,15 @@ Get-Process finance_app -ErrorAction SilentlyContinue | Stop-Process -Force
 puro flutter build windows
 ```
 
-## 7. 后续优化路线
+## 7. 版本变更记录
+
+### v0.5.0+6 (2026-06-11)
+
+- 账户页面：资产目标卡片的编辑和删除按钮合并为一个操作菜单
+- 账户页面：添加账户折叠/展开功能，支持点击切换显示状态
+- 账户页面：折叠状态持久化保存，下次打开页面时保持上次的折叠/展开状态
+
+## 8. 后续优化路线
 
 P0：
 
