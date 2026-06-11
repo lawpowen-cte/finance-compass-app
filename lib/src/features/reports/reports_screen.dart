@@ -15,6 +15,7 @@ import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 import '../../core/theme/finance_colors.dart';
 import '../../core/models/category.dart';
+import '../../core/models/transaction.dart';
 import '../shared/simple_charts.dart';
 
 enum ReportRangeType { last3Months, last6Months, last12Months, currentYear }
@@ -128,6 +129,46 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
             monthlyExpense: kpiExpense,
             isCumulative: measureMode == ReportMeasureMode.cumulative,
           ),
+        ),
+        const SizedBox(height: 16),
+
+        // ── 环比变化 ──
+        SectionCard(
+          title: '环比变化',
+          subtitle: '与上月对比',
+          child: _MonthOverMonthComparison(repository: repository),
+        ),
+        const SizedBox(height: 16),
+
+        // ── 实际 vs 预计 ──
+        SectionCard(
+          title: '实际 vs 预计',
+          subtitle: '$currentMonthKey 本月预算偏差',
+          child: _ActualVsPlanned(repository: repository, monthKey: currentMonthKey),
+        ),
+        const SizedBox(height: 16),
+
+        // ── 转账活动 ──
+        SectionCard(
+          title: '转账活动',
+          subtitle: '$currentMonthKey 本月转账',
+          child: _TransferActivity(repository: repository, monthKey: currentMonthKey),
+        ),
+        const SizedBox(height: 16),
+
+        // ── 按账户支出排名 ──
+        SectionCard(
+          title: '账户支出排名',
+          subtitle: '$currentMonthKey 本月',
+          child: _ExpenseByAccount(repository: repository, monthKey: currentMonthKey),
+        ),
+        const SizedBox(height: 16),
+
+        // ── 周期性支出汇总 ──
+        SectionCard(
+          title: '周期性支出',
+          subtitle: '每月固定支出',
+          child: _RecurringExpensesSummary(repository: repository),
         ),
         const SizedBox(height: 16),
 
@@ -362,6 +403,77 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         expense: runningExpense,
       );
     }).toList();
+  }
+}
+
+class _ActualVsPlanned extends StatelessWidget {
+  const _ActualVsPlanned({
+    required this.repository,
+    required this.monthKey,
+  });
+
+  final FinanceRepository repository;
+  final String monthKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final activeBudgets = repository.activeBudgetsForMonth(monthKey);
+
+    if (activeBudgets.isEmpty) {
+      return const Text('暂无预算数据', style: TextStyle(color: Colors.grey));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: activeBudgets.map((budget) {
+        final effective = repository.effectiveBudgetForMonth(budget, monthKey);
+        final spent = repository.expenseTotalForCategory(budget.categoryId, monthKey);
+        final planned = repository.plannedExpenseTotalForCategory(budget.categoryId, monthKey);
+        final variance = effective - spent - planned;
+        final varianceRatio = effective > 0 ? (variance / effective * 100) : 0.0;
+        final isOverBudget = variance < 0;
+        final varianceColor = isOverBudget ? FinanceColors.expense : FinanceColors.income;
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      repository.categoryName(budget.categoryId),
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '实际 ${formatMoney(spent)} / 预计 ${formatMoney(planned)} / 预算 ${formatMoney(effective)}',
+                      style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: varianceColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '${variance >= 0 ? '剩余' : '超支'} ${formatMoney(variance.abs())}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: varianceColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
   }
 }
 
@@ -1626,6 +1738,365 @@ class _InvestmentMetric extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _MonthOverMonthComparison extends StatelessWidget {
+  const _MonthOverMonthComparison({required this.repository});
+
+  final FinanceRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final currentMonthKey = monthKeyFromDate(now);
+    final lastMonth = DateTime(now.year, now.month - 1);
+    final lastMonthKey = monthKeyFromDate(lastMonth);
+
+    final currentIncome = repository.totalIncomeForMonth(currentMonthKey);
+    final lastIncome = repository.totalIncomeForMonth(lastMonthKey);
+    final currentExpense = repository.totalExpenseForMonth(currentMonthKey);
+    final lastExpense = repository.totalExpenseForMonth(lastMonthKey);
+
+    final incomeChange = lastIncome > 0 ? ((currentIncome - lastIncome) / lastIncome * 100) : 0.0;
+    final expenseChange = lastExpense > 0 ? ((currentExpense - lastExpense) / lastExpense * 100) : 0.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ComparisonItem(
+          label: '收入',
+          currentValue: currentIncome,
+          lastValue: lastIncome,
+          change: incomeChange,
+          isIncome: true,
+        ),
+        const SizedBox(height: 12),
+        _ComparisonItem(
+          label: '支出',
+          currentValue: currentExpense,
+          lastValue: lastExpense,
+          change: expenseChange,
+          isIncome: false,
+        ),
+      ],
+    );
+  }
+}
+
+class _ComparisonItem extends StatelessWidget {
+  const _ComparisonItem({
+    required this.label,
+    required this.currentValue,
+    required this.lastValue,
+    required this.change,
+    required this.isIncome,
+  });
+
+  final String label;
+  final double currentValue;
+  final double lastValue;
+  final double change;
+  final bool isIncome;
+
+  @override
+  Widget build(BuildContext context) {
+    final isPositive = change >= 0;
+    final changeColor = isIncome
+        ? (isPositive ? FinanceColors.income : FinanceColors.expense)
+        : (isPositive ? FinanceColors.expense : FinanceColors.income);
+    final changeIcon = isPositive ? Icons.trending_up : Icons.trending_down;
+
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+              const SizedBox(height: 4),
+              Text(
+                formatMoney(currentValue),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              '上月 ${formatMoney(lastValue)}',
+              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(changeIcon, size: 16, color: changeColor),
+                const SizedBox(width: 4),
+                Text(
+                  '${change >= 0 ? '+' : ''}${change.toStringAsFixed(1)}%',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: changeColor,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _TransferActivity extends StatelessWidget {
+  const _TransferActivity({
+    required this.repository,
+    required this.monthKey,
+  });
+
+  final FinanceRepository repository;
+  final String monthKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final transfers = repository.transactions.where((t) {
+      return t.type == TransactionType.transfer &&
+          monthKeyFromDate(t.transactionDate) == monthKey &&
+          t.status != TransactionStatus.planned;
+    }).toList();
+
+    if (transfers.isEmpty) {
+      return const Text('本月无转账记录', style: TextStyle(color: Colors.grey));
+    }
+
+    final totalTransferAmount = transfers.fold<double>(0, (sum, t) => sum + t.amount);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.swap_horiz, size: 16, color: FinanceColors.transfer),
+            const SizedBox(width: 8),
+            Text(
+              '${transfers.length} 笔转账',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+            ),
+            const Spacer(),
+            Text(
+              '总额 ${formatMoney(totalTransferAmount)}',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        ...transfers.take(5).map((transfer) => Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${repository.accountName(transfer.accountId)} → ${repository.accountName(transfer.toAccountId ?? '')}',
+                  style: const TextStyle(fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Text(
+                formatMoney(transfer.amount, currency: transfer.currency),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+              ),
+            ],
+          ),
+        )),
+        if (transfers.length > 5)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '...还有 ${transfers.length - 5} 笔',
+              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ExpenseByAccount extends StatelessWidget {
+  const _ExpenseByAccount({
+    required this.repository,
+    required this.monthKey,
+  });
+
+  final FinanceRepository repository;
+  final String monthKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final accounts = repository.accounts;
+    final accountExpenses = <String, double>{};
+
+    for (final account in accounts) {
+      final expense = repository.expenseBreakdownForAccount(account.id, monthKey)
+          .values.fold<double>(0, (sum, amount) => sum + amount);
+      if (expense > 0) {
+        accountExpenses[account.id] = expense;
+      }
+    }
+
+    if (accountExpenses.isEmpty) {
+      return const Text('本月无支出记录', style: TextStyle(color: Colors.grey));
+    }
+
+    final sortedEntries = accountExpenses.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final totalExpense = sortedEntries.fold<double>(0, (sum, e) => sum + e.value);
+
+    final colors = FinanceColors.categoryPalette;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: sortedEntries.take(5).toList().asMap().entries.map((entry) {
+        final index = entry.key;
+        final accountTotal = entry.value;
+        final accountName = repository.accountName(accountTotal.key);
+        final amount = accountTotal.value;
+        final percentage = totalExpense > 0 ? (amount / totalExpense * 100) : 0.0;
+        final color = colors[index % colors.length];
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      accountName,
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                  Text(
+                    '${formatMoney(amount)} (${percentage.toStringAsFixed(1)}%)',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: (percentage / 100).clamp(0.0, 1.0),
+                  backgroundColor: Colors.grey[200],
+                  valueColor: AlwaysStoppedAnimation(color),
+                  minHeight: 5,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _RecurringExpensesSummary extends StatelessWidget {
+  const _RecurringExpensesSummary({required this.repository});
+
+  final FinanceRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    final rules = repository.recurringTransactionRules;
+
+    if (rules.isEmpty) {
+      return const Text('暂无周期性支出', style: TextStyle(color: Colors.grey));
+    }
+
+    double totalMonthly = 0;
+    final ruleDetails = <MapEntry<String, double>>[];
+
+    for (final rule in rules) {
+      final monthlyAmount = rule.amount;
+      totalMonthly += monthlyAmount;
+      final categoryName = rule.categoryId != null && rule.categoryId!.isNotEmpty
+          ? repository.categoryName(rule.categoryId!)
+          : rule.name;
+      ruleDetails.add(MapEntry(categoryName, monthlyAmount));
+    }
+
+    ruleDetails.sort((a, b) => b.value.compareTo(a.value));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: FinanceColors.info.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: FinanceColors.info.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.repeat, size: 20, color: FinanceColors.info),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '每月固定支出总额',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                  Text(
+                    formatMoney(totalMonthly),
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              Text(
+                '${rules.length} 项规则',
+                style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        ...ruleDetails.map((entry) => Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            children: [
+              Icon(Icons.circle, size: 8, color: FinanceColors.info),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  entry.key,
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+              Text(
+                formatMoney(entry.value),
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+              ),
+            ],
+          ),
+        )),
+      ],
     );
   }
 }
