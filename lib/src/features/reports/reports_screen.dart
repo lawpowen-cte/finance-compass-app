@@ -301,6 +301,22 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
           child: _AssetTrendLine(repository: repository),
         ),
         const SizedBox(height: 16),
+
+        // ── 未来现金流预测 ──
+        SectionCard(
+          title: '未来展望',
+          subtitle: '未来3个月现金流预测',
+          child: _FutureCashFlowProjection(repository: repository),
+        ),
+        const SizedBox(height: 16),
+
+        // ── 投资盈亏汇总 ──
+        SectionCard(
+          title: '投资表现',
+          subtitle: '投资和退休账户汇总',
+          child: _InvestmentPnLSummary(repository: repository),
+        ),
+        const SizedBox(height: 16),
       ],
     );
   }
@@ -1370,6 +1386,246 @@ class _AssetTrendLine extends StatelessWidget {
     return SimpleLineChart(
       points: points,
       amountBuilder: formatMoneyValue,
+    );
+  }
+}
+
+class _FutureCashFlowProjection extends StatelessWidget {
+  const _FutureCashFlowProjection({required this.repository});
+
+  final FinanceRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    final projection = repository.futureCashFlowProjection(months: 3);
+    final forecast = repository.forecastSummary(months: 3);
+
+    if (projection.isEmpty) {
+      return const Text('暂无预测数据', style: TextStyle(color: Colors.grey));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 预测摘要
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: FinanceColors.info.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: FinanceColors.info.withValues(alpha: 0.3)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '预测摘要',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _ForecastItem(
+                    label: '月均收入',
+                    value: formatMoney(forecast.averageMonthlyIncome),
+                    color: FinanceColors.income,
+                  ),
+                  _ForecastItem(
+                    label: '月均支出',
+                    value: formatMoney(forecast.averageMonthlyExpense),
+                    color: FinanceColors.expense,
+                  ),
+                  _ForecastItem(
+                    label: '月均储蓄',
+                    value: formatMoney(forecast.averageMonthlySavings),
+                    color: forecast.averageMonthlySavings >= 0
+                        ? FinanceColors.income
+                        : FinanceColors.expense,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        // 月度预测
+        ...projection.map((point) => Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  point.monthKey,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                ),
+              ),
+              _ForecastItem(
+                label: '收入',
+                value: formatMoney(point.income),
+                color: FinanceColors.income,
+              ),
+              const SizedBox(width: 12),
+              _ForecastItem(
+                label: '支出',
+                value: formatMoney(point.expense),
+                color: FinanceColors.expense,
+              ),
+              const SizedBox(width: 12),
+              _ForecastItem(
+                label: '净额',
+                value: formatMoney(point.net),
+                color: point.net >= 0 ? FinanceColors.income : FinanceColors.expense,
+              ),
+            ],
+          ),
+        )),
+      ],
+    );
+  }
+}
+
+class _ForecastItem extends StatelessWidget {
+  const _ForecastItem({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+        Text(
+          value,
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
+        ),
+      ],
+    );
+  }
+}
+
+class _InvestmentPnLSummary extends StatelessWidget {
+  const _InvestmentPnLSummary({required this.repository});
+
+  final FinanceRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    final investmentAccounts = repository.investmentAccounts();
+
+    if (investmentAccounts.isEmpty) {
+      return const Text('暂无投资账户', style: TextStyle(color: Colors.grey));
+    }
+
+    double totalMarketValue = 0;
+    double totalCostBasis = 0;
+    double totalCashBalance = 0;
+    double totalContribution = 0;
+    double totalWithdrawal = 0;
+
+    final cutoffDate = repository.currentMonthCutoffDate();
+
+    for (final account in investmentAccounts) {
+      final balance = repository.accountBalanceAt(account.id, cutoffDate);
+      final cost = repository.costBasisForAccount(account.id, upToDate: cutoffDate);
+      final cash = repository.cashBalanceForAccount(account.id, upToDate: cutoffDate);
+      final flow = repository.investmentFlowSummaryForAccount(account.id, upToDate: cutoffDate);
+
+      totalMarketValue += balance;
+      totalCostBasis += cost;
+      totalCashBalance += cash;
+      totalContribution += flow.contribution;
+      totalWithdrawal += flow.withdrawal;
+    }
+
+    final remainingCost = (totalCostBasis - totalWithdrawal).clamp(0, double.infinity).toDouble();
+    final unrealizedPnL = totalMarketValue - remainingCost;
+    final pnlRatio = remainingCost > 0 ? (unrealizedPnL / remainingCost * 100) : 0.0;
+    final pnlColor = unrealizedPnL >= 0 ? FinanceColors.income : FinanceColors.expense;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          children: [
+            _InvestmentMetric(
+              label: '总市值',
+              value: formatMoney(totalMarketValue),
+              color: FinanceColors.info,
+            ),
+            _InvestmentMetric(
+              label: '累计成本',
+              value: formatMoney(totalCostBasis),
+              color: Colors.grey[700]!,
+            ),
+            _InvestmentMetric(
+              label: '现金余额',
+              value: formatMoney(totalCashBalance),
+              color: FinanceColors.cash,
+            ),
+            _InvestmentMetric(
+              label: '累计投入',
+              value: formatMoney(totalContribution),
+              color: FinanceColors.income,
+            ),
+            _InvestmentMetric(
+              label: '累计取出',
+              value: formatMoney(totalWithdrawal),
+              color: FinanceColors.expense,
+            ),
+            _InvestmentMetric(
+              label: '未实现盈亏',
+              value: '${formatMoney(unrealizedPnL)} (${pnlRatio.toStringAsFixed(1)}%)',
+              color: pnlColor,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _InvestmentMetric extends StatelessWidget {
+  const _InvestmentMetric({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+          Text(
+            value,
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+          ),
+        ],
+      ),
     );
   }
 }
