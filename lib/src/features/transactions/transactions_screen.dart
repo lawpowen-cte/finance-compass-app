@@ -10,6 +10,7 @@ import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/month_key.dart';
 import '../../core/utils/month_range.dart';
 import '../categories/category_manage_screen.dart';
+import '../shared/empty_state.dart';
 import '../shared/finance_action_menu_button.dart';
 import '../shared/finance_filter_bar.dart';
 import '../shared/finance_metric_card.dart';
@@ -225,27 +226,31 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
       categoryId: effectiveCategoryId,
     );
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        if (!_isSelectionMode)
-          ScreenHeader(
-            title: '交易',
-            actions: [
-              IconButton.filledTonal(
-                onPressed: () => _showCategoryManage(context),
-                icon: const Icon(Icons.category_outlined),
-                tooltip: '类别管理',
-              ),
-              const SizedBox(width: 8),
-              IconButton.filled(
-                onPressed: () => _showAddTransaction(context),
-                icon: const Icon(Icons.add),
-                tooltip: '新增交易',
-              ),
-            ],
-          ),
-        const SizedBox(height: 12),
+    return RefreshIndicator(
+      onRefresh: () async {
+        setState(() {});
+      },
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (!_isSelectionMode)
+            ScreenHeader(
+              title: '交易',
+              actions: [
+                IconButton.filledTonal(
+                  onPressed: () => _showCategoryManage(context),
+                  icon: const Icon(Icons.category_outlined),
+                  tooltip: '类别管理',
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  onPressed: () => _showAddTransaction(context),
+                  icon: const Icon(Icons.add),
+                  tooltip: '新增交易',
+                ),
+              ],
+            ),
+          const SizedBox(height: 12),
         SectionCard(
           title: '快捷录入',
           subtitle: '点按直接使用，右侧菜单维护模板和周期规则',
@@ -634,7 +639,11 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           title: '交易列表',
           subtitle: '共 ${filteredTransactions.length} 笔',
           child: filteredTransactions.isEmpty
-              ? const Text('暂无交易')
+              ? const EmptyState(
+                  title: '暂无交易',
+                  subtitle: '点击右上角按钮添加第一笔交易',
+                  icon: Icons.receipt_long_outlined,
+                )
               : Column(
                   children: filteredTransactions.map((transaction) {
                     final categoryName = transaction.categoryId == null
@@ -818,7 +827,8 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   }).toList(),
                 ),
         ),
-      ],
+        ],
+      ),
     );
   }
 
