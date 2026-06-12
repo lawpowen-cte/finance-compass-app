@@ -1130,7 +1130,7 @@ class _FutureForecastSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final forecast = repository.forecastSummary(months: 3);
-    final projection = repository.futureCashFlowProjection(months: 3);
+    final projection = repository.futureCashFlowProjection(months: 4).skip(1).toList();
     final goalSummaries = repository.assetGoalSummaries();
     final now = DateTime.now();
 
