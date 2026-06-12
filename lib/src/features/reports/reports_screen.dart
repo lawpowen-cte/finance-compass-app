@@ -1,28 +1,25 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
-import '../../core/providers/ai_analysis_provider.dart';
+import '../../core/database/database_provider.dart';
 import '../../core/models/account.dart';
+import '../../core/models/category.dart';
 import '../../core/models/monthly_summary.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/month_key.dart';
 import '../../core/utils/month_range.dart';
 import '../shared/finance_metric_card.dart';
-import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 import '../../core/theme/finance_colors.dart';
-import '../../core/models/category.dart';
-import '../../core/models/transaction.dart';
 import '../shared/simple_charts.dart';
 
-enum ReportRangeType { last3Months, last6Months, last12Months, currentYear }
+enum ReportRangeType { thisMonth, thisQuarter, last3Months, last6Months, last12Months, thisYear, lastYear, allTime }
 
 enum ReportMeasureMode { monthly, cumulative }
-
-enum DataFilterMode { actual, all }
 
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key, required this.repository});
@@ -34,9 +31,68 @@ class ReportsScreen extends ConsumerStatefulWidget {
 }
 
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
-  ReportRangeType rangeType = ReportRangeType.last6Months;
+  ReportRangeType rangeType = ReportRangeType.thisYear;
   ReportMeasureMode measureMode = ReportMeasureMode.monthly;
-  DataFilterMode dataFilterMode = DataFilterMode.actual;
+  List<String> _sectionOrder = [];
+  bool _isLoadingOrder = true;
+
+  static const _defaultSectionOrder = [
+    'overview',
+    'trends',
+    'budget',
+    'expense',
+    'asset',
+    'forecast',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSectionOrder();
+  }
+
+  Future<void> _loadSectionOrder() async {
+    final raw = await DatabaseProvider.instance.getMetaValue('report_section_order_v2');
+    if (raw != null && mounted) {
+      try {
+        final List<dynamic> decoded = jsonDecode(raw);
+        setState(() {
+          _sectionOrder = decoded.cast<String>();
+          _isLoadingOrder = false;
+        });
+      } catch (_) {
+        setState(() {
+          _sectionOrder = List.from(_defaultSectionOrder);
+          _isLoadingOrder = false;
+        });
+      }
+    } else if (mounted) {
+      setState(() {
+        _sectionOrder = List.from(_defaultSectionOrder);
+        _isLoadingOrder = false;
+      });
+    }
+  }
+
+  Future<void> _saveSectionOrder(List<String> order) async {
+    setState(() {
+      _sectionOrder = order;
+    });
+    await DatabaseProvider.instance.setMetaValue(
+      'report_section_order_v2',
+      jsonEncode(order),
+    );
+  }
+
+  void _reorderSections(int oldIndex, int newIndex) {
+    if (oldIndex < newIndex) {
+      newIndex -= 1;
+    }
+    final newOrder = List<String>.from(_sectionOrder);
+    final item = newOrder.removeAt(oldIndex);
+    newOrder.insert(newIndex, item);
+    _saveSectionOrder(newOrder);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -44,20 +100,13 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     final now = DateTime.now();
     final currentMonthKey = monthKeyFromDate(now);
     final monthKeys = _monthKeysForRange(rangeType, now);
-    final includePlanned = dataFilterMode == DataFilterMode.all;
 
     final rawSummaries = monthKeys
         .map(
           (monthKey) => MonthlySummary(
             monthKey: monthKey,
-            income: repository.totalIncomeForMonth(monthKey) +
-                (includePlanned
-                    ? repository.plannedIncomeForMonth(monthKey)
-                    : 0),
-            expense: repository.totalExpenseForMonth(monthKey) +
-                (includePlanned
-                    ? repository.plannedExpenseForMonth(monthKey)
-                    : 0),
+            income: repository.totalIncomeForMonth(monthKey),
+            expense: repository.totalExpenseForMonth(monthKey),
           ),
         )
         .toList();
@@ -65,329 +114,130 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         ? rawSummaries
         : _toCumulativeSummaries(rawSummaries);
 
-    final budgetMonth = currentMonthKey;
-    final activeBudgets = repository.activeBudgetsForMonth(budgetMonth);
-    final goalSummaries = repository.assetGoalSummaries();
+    final currentIncome = repository.totalIncomeForMonth(currentMonthKey);
+    final currentExpense = repository.totalExpenseForMonth(currentMonthKey);
+    final lastMonth = DateTime(now.year, now.month - 1);
+    final lastMonthKey = monthKeyFromDate(lastMonth);
+    final lastIncome = repository.totalIncomeForMonth(lastMonthKey);
+    final lastExpense = repository.totalExpenseForMonth(lastMonthKey);
 
-    // 本月实际数据 (or actual+planned)
-    final actualIncome = repository.totalIncomeForMonth(currentMonthKey) +
-        (includePlanned
-            ? repository.plannedIncomeForMonth(currentMonthKey)
-            : 0);
-    final actualExpense = repository.totalExpenseForMonth(currentMonthKey) +
-        (includePlanned
-            ? repository.plannedExpenseForMonth(currentMonthKey)
-            : 0);
+    final incomeChange = lastIncome > 0 ? ((currentIncome - lastIncome) / lastIncome * 100) : 0.0;
+    final expenseChange = lastExpense > 0 ? ((currentExpense - lastExpense) / lastExpense * 100) : 0.0;
 
-    // 累计数据（所选时间范围的总和）
-    final cumulativeIncome =
-        rawSummaries.fold<double>(0, (sum, s) => sum + s.income);
-    final cumulativeExpense =
-        rawSummaries.fold<double>(0, (sum, s) => sum + s.expense);
+    if (_isLoadingOrder) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-    // KPI 根据模式选择数据
-    final kpiIncome = measureMode == ReportMeasureMode.cumulative
-        ? cumulativeIncome
-        : actualIncome;
-    final kpiExpense = measureMode == ReportMeasureMode.cumulative
-        ? cumulativeExpense
-        : actualExpense;
+    final sections = <MapEntry<String, Widget>>[
+      // 1. 快速概览
+      MapEntry('overview', _QuickOverviewSection(
+        repository: repository,
+        currentMonthKey: currentMonthKey,
+        currentIncome: currentIncome,
+        currentExpense: currentExpense,
+        incomeChange: incomeChange,
+        expenseChange: expenseChange,
+      )),
+      // 2. 趋势分析
+      MapEntry('trends', _TrendAnalysisSection(
+        repository: repository,
+        summaries: displaySummaries,
+        measureMode: measureMode,
+        rangeType: rangeType,
+        onMeasureChanged: (value) => setState(() => measureMode = value),
+        onRangeChanged: (value) => setState(() => rangeType = value),
+      )),
+      // 3. 预算洞察
+      MapEntry('budget', _BudgetInsightsSection(
+        repository: repository,
+        monthKey: currentMonthKey,
+      )),
+      // 4. 支出分析
+      MapEntry('expense', _ExpenseAnalysisSection(
+        repository: repository,
+        currentMonthKey: currentMonthKey,
+        monthKeys: monthKeys,
+      )),
+      // 5. 资产健康
+      MapEntry('asset', _AssetHealthSection(
+        repository: repository,
+      )),
+      // 6. 未来预测
+      MapEntry('forecast', _FutureForecastSection(
+        repository: repository,
+      )),
+    ];
 
-    return ListView(
+    // Sort sections by saved order
+    final sortedSections = <MapEntry<String, Widget>>[];
+    for (final sectionId in _sectionOrder) {
+      final section = sections.where((s) => s.key == sectionId).firstOrNull;
+      if (section != null) {
+        sortedSections.add(section);
+      }
+    }
+    // Add any new sections not in saved order
+    for (final section in sections) {
+      if (!_sectionOrder.contains(section.key)) {
+        sortedSections.add(section);
+      }
+    }
+
+    return ReorderableListView(
       padding: const EdgeInsets.all(16),
-      children: [
-        const ScreenHeader(
-          title: '报表',
-          subtitle: '按时间范围、统计口径和数据范围查看财务表现',
-        ),
-        const SizedBox(height: 16),
-        SectionCard(
-          title: '分析口径',
-          subtitle:
-              '${_rangeLabel(rangeType)} · ${_measureLabel(measureMode)} · ${_dataFilterLabel(dataFilterMode)}',
-          child: _ReportControls(
-            rangeType: rangeType,
-            measureMode: measureMode,
-            dataFilterMode: dataFilterMode,
-            monthCount: _monthCountForRange(rangeType),
-            onRangeChanged: (value) => setState(() => rangeType = value),
-            onMeasureChanged: (value) => setState(() => measureMode = value),
-            onDataFilterChanged: (value) =>
-                setState(() => dataFilterMode = value),
-          ),
-        ),
-        const _AiResultDisplay(),
-        const SizedBox(height: 16),
-        SectionCard(
-          title: '总览',
-          subtitle: measureMode == ReportMeasureMode.cumulative
-              ? '所选时间范围累计'
-              : '$currentMonthKey 本月表现',
-          child: _KpiCards(
-            totalAssets: repository.totalAssets(),
-            monthlyIncome: kpiIncome,
-            monthlyExpense: kpiExpense,
-            isCumulative: measureMode == ReportMeasureMode.cumulative,
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // ── 环比变化 ──
-        SectionCard(
-          title: '环比变化',
-          subtitle: '与上月对比',
-          child: _MonthOverMonthComparison(repository: repository),
-        ),
-        const SizedBox(height: 16),
-
-        // ── 实际 vs 预计 ──
-        SectionCard(
-          title: '实际 vs 预计',
-          subtitle: '$currentMonthKey 本月预算偏差',
-          child: _ActualVsPlanned(repository: repository, monthKey: currentMonthKey),
-        ),
-        const SizedBox(height: 16),
-
-        // ── 转账活动 ──
-        SectionCard(
-          title: '转账活动',
-          subtitle: '$currentMonthKey 本月转账',
-          child: _TransferActivity(repository: repository, monthKey: currentMonthKey),
-        ),
-        const SizedBox(height: 16),
-
-        // ── 按账户支出排名 ──
-        SectionCard(
-          title: '账户支出排名',
-          subtitle: '$currentMonthKey 本月',
-          child: _ExpenseByAccount(repository: repository, monthKey: currentMonthKey),
-        ),
-        const SizedBox(height: 16),
-
-        // ── 周期性支出汇总 ──
-        SectionCard(
-          title: '周期性支出',
-          subtitle: '每月固定支出',
-          child: _RecurringExpensesSummary(repository: repository),
-        ),
-        const SizedBox(height: 16),
-
-        // ── 目标进度条 ──
-        if (goalSummaries.isNotEmpty) ...[
-          SectionCard(
-            title: '资产目标',
-            child: Column(
-              children: goalSummaries.map((g) {
-                final pct = g.progressRatio * 100;
-                final color = pct >= 100
-                    ? FinanceColors.incomeSoft
-                    : pct >= 50
-                        ? FinanceColors.info
-                        : FinanceColors.retirement;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              g.goal.name,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w500, fontSize: 13),
-                            ),
-                          ),
-                          Text(
-                            '${formatMoney(g.currentAssets)} / ${formatMoney(g.goal.targetAmount)}',
-                            style: TextStyle(
-                                fontSize: 12, color: Colors.grey[600]),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '${pct.toStringAsFixed(1)}%',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 12,
-                                color: color),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: math.min(g.progressRatio, 1.0),
-                          backgroundColor: Colors.grey[200],
-                          valueColor: AlwaysStoppedAnimation(color),
-                          minHeight: 6,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
-
-        // ── 收支趋势 ──
-        SectionCard(
-          title: measureMode == ReportMeasureMode.monthly ? '收支趋势' : '累计趋势',
-          subtitle: rangeType == ReportRangeType.currentYear
-              ? '本年度，未来月份浅色标记'
-              : _rangeLabel(rangeType),
-          child: _MonthlyBarChart(
-            summaries: displaySummaries,
-            now: now,
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        _ReportCardGrid(
-          children: [
-            SectionCard(
-              title: '资产分布',
-              subtitle: '按报表分组',
-              child: _AssetDistributionPieChart(repository: repository),
-            ),
-            SectionCard(
-              title: '账户明细',
-              subtitle: '按当前月截止日',
-              child: _AccountDetails(repository: repository),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-
-        // ── 预算状态 ──
-        SectionCard(
-          title: '预算执行',
-          subtitle: monthLabel(budgetMonth),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      buildDefaultDragHandles: false,
+      onReorder: _reorderSections,
+      children: sortedSections.asMap().entries.map((entry) {
+        final index = entry.key;
+        final section = entry.value;
+        return Container(
+          key: ValueKey('report-section-${section.key}'),
+          margin: const EdgeInsets.only(bottom: 16),
+          child: Stack(
             children: [
-              if (activeBudgets.isEmpty)
-                const Text('暂无预算数据', style: TextStyle(color: Colors.grey)),
-              ...activeBudgets.map((budget) {
-                final effective =
-                    repository.effectiveBudgetForMonth(budget, budgetMonth);
-                final spent = repository.expenseTotalForCategory(
-                    budget.categoryId, budgetMonth);
-                final ratio = effective > 0 ? spent / effective : 0.0;
-                final isOver = ratio > 1.0;
-                final color = isOver
-                    ? FinanceColors.budgetOver
-                    : ratio > 0.8
-                        ? FinanceColors.budgetWarning
-                        : FinanceColors.budgetSafe;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              repository.categoryName(budget.categoryId),
-                              style: const TextStyle(
-                                  fontSize: 13, fontWeight: FontWeight.w500),
-                            ),
-                          ),
-                          Text(
-                            '${formatMoney(spent)} / ${formatMoney(effective)}',
-                            style: TextStyle(
-                                fontSize: 12, color: Colors.grey[600]),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: math.min(ratio, 1.0),
-                          backgroundColor: Colors.grey[200],
-                          valueColor: AlwaysStoppedAnimation(color),
-                          minHeight: 5,
-                        ),
-                      ),
-                    ],
+              section.value,
+              Positioned(
+                top: 12,
+                right: 12,
+                child: ReorderableDragStartListener(
+                  index: index,
+                  child: Icon(
+                    Icons.drag_handle,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.outline,
                   ),
-                );
-              }),
+                ),
+              ),
             ],
           ),
-        ),
-        const SizedBox(height: 16),
-
-        // ── 支出分类明细 ──
-        SectionCard(
-          title: '支出分类',
-          subtitle: measureMode == ReportMeasureMode.cumulative
-              ? '${_rangeLabel(rangeType)}累计'
-              : '$currentMonthKey 本月',
-          child: _ExpenseCategoryBreakdown(
-            repository: repository,
-            monthKeys: includePlanned ? monthKeys : [currentMonthKey],
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // ── 资产趋势线 ──
-        SectionCard(
-          title: '资产趋势',
-          subtitle: '净资产走势',
-          child: _AssetTrendLine(repository: repository),
-        ),
-        const SizedBox(height: 16),
-
-        // ── 未来现金流预测 ──
-        SectionCard(
-          title: '未来展望',
-          subtitle: '未来3个月现金流预测',
-          child: _FutureCashFlowProjection(repository: repository),
-        ),
-        const SizedBox(height: 16),
-
-        // ── 投资盈亏汇总 ──
-        SectionCard(
-          title: '投资表现',
-          subtitle: '投资和退休账户汇总',
-          child: _InvestmentPnLSummary(repository: repository),
-        ),
-        const SizedBox(height: 16),
-      ],
+        );
+      }).toList(),
     );
   }
 
   List<String> _monthKeysForRange(ReportRangeType rangeType, DateTime now) {
     switch (rangeType) {
+      case ReportRangeType.thisMonth:
+        return [monthKeyFromDate(now)];
+      case ReportRangeType.thisQuarter:
+        final quarterStart = DateTime(now.year, ((now.month - 1) ~/ 3) * 3 + 1);
+        return List.generate(3, (i) => monthKeyFromDate(DateTime(quarterStart.year, quarterStart.month + i)));
       case ReportRangeType.last3Months:
         return recentMonthKeys(count: 3, anchor: now);
       case ReportRangeType.last6Months:
         return recentMonthKeys(count: 6, anchor: now);
       case ReportRangeType.last12Months:
         return recentMonthKeys(count: 12, anchor: now);
-      case ReportRangeType.currentYear:
-        return List.generate(12, (index) {
-          final date = DateTime(now.year, index + 1);
-          return monthKeyFromDate(date);
-        });
-    }
-  }
-
-  int _monthCountForRange(ReportRangeType rangeType) {
-    switch (rangeType) {
-      case ReportRangeType.last3Months:
-        return 3;
-      case ReportRangeType.last6Months:
-        return 6;
-      case ReportRangeType.last12Months:
-        return 12;
-      case ReportRangeType.currentYear:
-        return 12;
+      case ReportRangeType.thisYear:
+        return List.generate(12, (i) => monthKeyFromDate(DateTime(now.year, i + 1)));
+      case ReportRangeType.lastYear:
+        return List.generate(12, (i) => monthKeyFromDate(DateTime(now.year - 1, i + 1)));
+      case ReportRangeType.allTime:
+        final allMonths = <String>{};
+        for (final transaction in widget.repository.transactions) {
+          allMonths.add(monthKeyFromDate(transaction.transactionDate));
+        }
+        return allMonths.toList()..sort();
     }
   }
 
@@ -406,8 +256,340 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   }
 }
 
-class _ActualVsPlanned extends StatelessWidget {
-  const _ActualVsPlanned({
+// ═══════════════════════════════════════════════════════════════
+// Section 1: Quick Overview
+// ═══════════════════════════════════════════════════════════════
+
+class _QuickOverviewSection extends StatelessWidget {
+  const _QuickOverviewSection({
+    required this.repository,
+    required this.currentMonthKey,
+    required this.currentIncome,
+    required this.currentExpense,
+    required this.incomeChange,
+    required this.expenseChange,
+  });
+
+  final FinanceRepository repository;
+  final String currentMonthKey;
+  final double currentIncome;
+  final double currentExpense;
+  final double incomeChange;
+  final double expenseChange;
+
+  @override
+  Widget build(BuildContext context) {
+    final netBalance = currentIncome - currentExpense;
+    final totalAssets = repository.totalAssets();
+
+    return SectionCard(
+      title: '快速概览',
+      subtitle: '$currentMonthKey 本月表现',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          FinanceMetricGrid(
+            minItemWidth: 120,
+            maxColumns: 4,
+            children: [
+              FinanceMetricCard(
+                label: '收入',
+                value: formatMoney(currentIncome),
+                color: FinanceColors.income,
+              ),
+              FinanceMetricCard(
+                label: '支出',
+                value: formatMoney(currentExpense),
+                color: FinanceColors.expense,
+              ),
+              FinanceMetricCard(
+                label: '结余',
+                value: formatMoney(netBalance),
+                color: netBalance >= 0 ? FinanceColors.income : FinanceColors.expense,
+              ),
+              FinanceMetricCard(
+                label: '总资产',
+                value: formatMoney(totalAssets),
+                color: FinanceColors.info,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _ChangeIndicator(
+                label: '收入变化',
+                change: incomeChange,
+                isPositive: incomeChange >= 0,
+              ),
+              const SizedBox(width: 16),
+              _ChangeIndicator(
+                label: '支出变化',
+                change: expenseChange,
+                isPositive: expenseChange <= 0,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChangeIndicator extends StatelessWidget {
+  const _ChangeIndicator({
+    required this.label,
+    required this.change,
+    required this.isPositive,
+  });
+
+  final String label;
+  final double change;
+  final bool isPositive;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isPositive ? FinanceColors.income : FinanceColors.expense;
+    final icon = change >= 0 ? Icons.trending_up : Icons.trending_down;
+
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 4),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+            Text(
+              '${change >= 0 ? '+' : ''}${change.toStringAsFixed(1)}%',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Section 2: Trend Analysis
+// ═══════════════════════════════════════════════════════════════
+
+class _TrendAnalysisSection extends StatelessWidget {
+  const _TrendAnalysisSection({
+    required this.repository,
+    required this.summaries,
+    required this.measureMode,
+    required this.rangeType,
+    required this.onMeasureChanged,
+    required this.onRangeChanged,
+  });
+
+  final FinanceRepository repository;
+  final List<MonthlySummary> summaries;
+  final ReportMeasureMode measureMode;
+  final ReportRangeType rangeType;
+  final ValueChanged<ReportMeasureMode> onMeasureChanged;
+  final ValueChanged<ReportRangeType> onRangeChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SectionCard(
+      title: '趋势分析',
+      subtitle: measureMode == ReportMeasureMode.monthly ? '月度收支趋势' : '累计收支趋势',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ChoiceChip(
+                label: const Text('月度'),
+                selected: measureMode == ReportMeasureMode.monthly,
+                onSelected: (_) => onMeasureChanged(ReportMeasureMode.monthly),
+              ),
+              ChoiceChip(
+                label: const Text('累计'),
+                selected: measureMode == ReportMeasureMode.cumulative,
+                onSelected: (_) => onMeasureChanged(ReportMeasureMode.cumulative),
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('本月'),
+                selected: rangeType == ReportRangeType.thisMonth,
+                onSelected: (_) => onRangeChanged(ReportRangeType.thisMonth),
+              ),
+              ChoiceChip(
+                label: const Text('本季'),
+                selected: rangeType == ReportRangeType.thisQuarter,
+                onSelected: (_) => onRangeChanged(ReportRangeType.thisQuarter),
+              ),
+              ChoiceChip(
+                label: const Text('本年'),
+                selected: rangeType == ReportRangeType.thisYear,
+                onSelected: (_) => onRangeChanged(ReportRangeType.thisYear),
+              ),
+              ChoiceChip(
+                label: const Text('去年'),
+                selected: rangeType == ReportRangeType.lastYear,
+                onSelected: (_) => onRangeChanged(ReportRangeType.lastYear),
+              ),
+              ChoiceChip(
+                label: const Text('3月'),
+                selected: rangeType == ReportRangeType.last3Months,
+                onSelected: (_) => onRangeChanged(ReportRangeType.last3Months),
+              ),
+              ChoiceChip(
+                label: const Text('6月'),
+                selected: rangeType == ReportRangeType.last6Months,
+                onSelected: (_) => onRangeChanged(ReportRangeType.last6Months),
+              ),
+              ChoiceChip(
+                label: const Text('12月'),
+                selected: rangeType == ReportRangeType.last12Months,
+                onSelected: (_) => onRangeChanged(ReportRangeType.last12Months),
+              ),
+              ChoiceChip(
+                label: const Text('全部'),
+                selected: rangeType == ReportRangeType.allTime,
+                onSelected: (_) => onRangeChanged(ReportRangeType.allTime),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 200,
+            child: _TrendChart(summaries: summaries),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _LegendItem(color: FinanceColors.income, label: '收入'),
+              const SizedBox(width: 16),
+              _LegendItem(color: FinanceColors.expense, label: '支出'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrendChart extends StatelessWidget {
+  const _TrendChart({required this.summaries});
+
+  final List<MonthlySummary> summaries;
+
+  @override
+  Widget build(BuildContext context) {
+    if (summaries.isEmpty) {
+      return const Center(child: Text('暂无数据'));
+    }
+
+    final maxValue = summaries.fold<double>(0, (max, s) => math.max(max, math.max(s.income, s.expense)));
+
+    return CustomPaint(
+      painter: _TrendChartPainter(
+        summaries: summaries,
+        maxValue: maxValue,
+        incomeColor: FinanceColors.income,
+        expenseColor: FinanceColors.expense,
+      ),
+      child: Container(),
+    );
+  }
+}
+
+class _TrendChartPainter extends CustomPainter {
+  _TrendChartPainter({
+    required this.summaries,
+    required this.maxValue,
+    required this.incomeColor,
+    required this.expenseColor,
+  });
+
+  final List<MonthlySummary> summaries;
+  final double maxValue;
+  final Color incomeColor;
+  final Color expenseColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (summaries.isEmpty || maxValue == 0) return;
+
+    final incomePaint = Paint()
+      ..color = incomeColor
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    final expensePaint = Paint()
+      ..color = expenseColor
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    final width = size.width;
+    final height = size.height;
+    final stepX = width / (summaries.length - 1);
+
+    final incomePath = Path();
+    final expensePath = Path();
+
+    for (var i = 0; i < summaries.length; i++) {
+      final x = i * stepX;
+      final incomeY = height - (summaries[i].income / maxValue * height);
+      final expenseY = height - (summaries[i].expense / maxValue * height);
+
+      if (i == 0) {
+        incomePath.moveTo(x, incomeY);
+        expensePath.moveTo(x, expenseY);
+      } else {
+        incomePath.lineTo(x, incomeY);
+        expensePath.lineTo(x, expenseY);
+      }
+    }
+
+    canvas.drawPath(incomePath, incomePaint);
+    canvas.drawPath(expensePath, expensePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class _LegendItem extends StatelessWidget {
+  const _LegendItem({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+      ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Section 3: Budget Insights
+// ═══════════════════════════════════════════════════════════════
+
+class _BudgetInsightsSection extends StatelessWidget {
+  const _BudgetInsightsSection({
     required this.repository,
     required this.monthKey,
   });
@@ -420,909 +602,135 @@ class _ActualVsPlanned extends StatelessWidget {
     final activeBudgets = repository.activeBudgetsForMonth(monthKey);
 
     if (activeBudgets.isEmpty) {
-      return const Text('暂无预算数据', style: TextStyle(color: Colors.grey));
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: activeBudgets.map((budget) {
-        final effective = repository.effectiveBudgetForMonth(budget, monthKey);
-        final spent = repository.expenseTotalForCategory(budget.categoryId, monthKey);
-        final planned = repository.plannedExpenseTotalForCategory(budget.categoryId, monthKey);
-        final variance = effective - spent - planned;
-        final varianceRatio = effective > 0 ? (variance / effective * 100) : 0.0;
-        final isOverBudget = variance < 0;
-        final varianceColor = isOverBudget ? FinanceColors.expense : FinanceColors.income;
-
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      repository.categoryName(budget.categoryId),
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '实际 ${formatMoney(spent)} / 预计 ${formatMoney(planned)} / 预算 ${formatMoney(effective)}',
-                      style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: varianceColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  '${variance >= 0 ? '剩余' : '超支'} ${formatMoney(variance.abs())}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: varianceColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
-
-String _rangeLabel(ReportRangeType type) {
-  return switch (type) {
-    ReportRangeType.last3Months => '近 3 个月',
-    ReportRangeType.last6Months => '近 6 个月',
-    ReportRangeType.last12Months => '近 12 个月',
-    ReportRangeType.currentYear => '本年度',
-  };
-}
-
-String _measureLabel(ReportMeasureMode mode) {
-  return switch (mode) {
-    ReportMeasureMode.monthly => '单月',
-    ReportMeasureMode.cumulative => '累计',
-  };
-}
-
-String _dataFilterLabel(DataFilterMode mode) {
-  return switch (mode) {
-    DataFilterMode.actual => '已发生',
-    DataFilterMode.all => '含预计',
-  };
-}
-
-class _ReportControls extends StatelessWidget {
-  const _ReportControls({
-    required this.rangeType,
-    required this.measureMode,
-    required this.dataFilterMode,
-    required this.monthCount,
-    required this.onRangeChanged,
-    required this.onMeasureChanged,
-    required this.onDataFilterChanged,
-  });
-
-  final ReportRangeType rangeType;
-  final ReportMeasureMode measureMode;
-  final DataFilterMode dataFilterMode;
-  final int monthCount;
-  final ValueChanged<ReportRangeType> onRangeChanged;
-  final ValueChanged<ReportMeasureMode> onMeasureChanged;
-  final ValueChanged<DataFilterMode> onDataFilterChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 560;
-        final rangeField = DropdownButtonFormField<ReportRangeType>(
-          key: ValueKey(rangeType),
-          initialValue: rangeType,
-          decoration: const InputDecoration(
-            labelText: '时间范围',
-            border: OutlineInputBorder(),
-            isDense: true,
-          ),
-          items: ReportRangeType.values
-              .map(
-                (type) => DropdownMenuItem(
-                  value: type,
-                  child: Text(_rangeLabel(type)),
-                ),
-              )
-              .toList(),
-          onChanged: (value) {
-            if (value != null) {
-              onRangeChanged(value);
-            }
-          },
-        );
-        final measureToggle = SegmentedButton<ReportMeasureMode>(
-          showSelectedIcon: false,
-          segments: const [
-            ButtonSegment(value: ReportMeasureMode.monthly, label: Text('单月')),
-            ButtonSegment(
-              value: ReportMeasureMode.cumulative,
-              label: Text('累计'),
-            ),
-          ],
-          selected: {measureMode},
-          onSelectionChanged: (selection) {
-            onMeasureChanged(selection.first);
-          },
-        );
-        final dataToggle = SegmentedButton<DataFilterMode>(
-          showSelectedIcon: false,
-          segments: const [
-            ButtonSegment(value: DataFilterMode.actual, label: Text('已发生')),
-            ButtonSegment(value: DataFilterMode.all, label: Text('含预计')),
-          ],
-          selected: {dataFilterMode},
-          onSelectionChanged: (selection) {
-            onDataFilterChanged(selection.first);
-          },
-        );
-        final aiButton = SizedBox(
-          height: 48,
-          child: _AiAnalysisButton(
-            includePlanned: dataFilterMode == DataFilterMode.all,
-            monthCount: monthCount,
-          ),
-        );
-
-        if (!wide) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              rangeField,
-              const SizedBox(height: 12),
-              measureToggle,
-              const SizedBox(height: 12),
-              dataToggle,
-              const SizedBox(height: 12),
-              aiButton,
-            ],
-          );
-        }
-
-        return Column(
-          children: [
-            Row(
-              children: [
-                Expanded(child: rangeField),
-                const SizedBox(width: 12),
-                Expanded(child: aiButton),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: measureToggle),
-                const SizedBox(width: 12),
-                Expanded(child: dataToggle),
-              ],
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _ReportCardGrid extends StatelessWidget {
-  const _ReportCardGrid({required this.children});
-
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    const gap = 12.0;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 720 ? 2 : 1;
-        final itemWidth =
-            (constraints.maxWidth - gap * (columns - 1)) / columns;
-        return Wrap(
-          spacing: gap,
-          children: [
-            for (final child in children)
-              SizedBox(
-                width: itemWidth,
-                child: child,
-              ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-// ── KPI 卡片 ─────────────────────────────────────────────────
-class _KpiCards extends StatelessWidget {
-  const _KpiCards({
-    required this.totalAssets,
-    required this.monthlyIncome,
-    required this.monthlyExpense,
-    required this.isCumulative,
-  });
-
-  final double totalAssets;
-  final double monthlyIncome;
-  final double monthlyExpense;
-  final bool isCumulative;
-
-  @override
-  Widget build(BuildContext context) {
-    final net = monthlyIncome - monthlyExpense;
-    final prefix = isCumulative ? '累计' : '本月';
-    final cards = [
-      FinanceMetricCard(
-        label: '净资产',
-        value: formatMoney(totalAssets),
-        color: const Color(0xFF5B9BD5),
-        padding: const EdgeInsets.all(14),
-        valueSize: 17,
-      ),
-      FinanceMetricCard(
-        label: '$prefix收入',
-        value: formatMoney(monthlyIncome),
-        color: const Color(0xFF6AAF8A),
-        padding: const EdgeInsets.all(14),
-        valueSize: 17,
-      ),
-      FinanceMetricCard(
-        label: '$prefix支出',
-        value: formatMoney(monthlyExpense),
-        color: const Color(0xFFE07B7B),
-        padding: const EdgeInsets.all(14),
-        valueSize: 17,
-      ),
-      FinanceMetricCard(
-        label: '$prefix结余',
-        value: formatMoney(net),
-        color: net >= 0 ? const Color(0xFF6AAF8A) : const Color(0xFFE07B7B),
-        padding: const EdgeInsets.all(14),
-        valueSize: 17,
-      ),
-    ];
-
-    return FinanceMetricGrid(
-      gap: 10,
-      minItemWidth: 168,
-      maxColumns: 4,
-      children: cards,
-    );
-  }
-}
-
-// ── 月度柱状图 (带 Y 轴) ──────────────────────────────────────
-class _MonthlyBarChart extends StatelessWidget {
-  const _MonthlyBarChart({required this.summaries, required this.now});
-
-  final List<MonthlySummary> summaries;
-  final DateTime now;
-
-  static const double _yAxisWidth = 36;
-  static const double _chartHeight = 200;
-  static const double _topPadding = 12;
-  static const double _bottomLabelHeight = 22;
-
-  @override
-  Widget build(BuildContext context) {
-    if (summaries.isEmpty) {
-      return const SizedBox(height: 120, child: Center(child: Text('暂无数据')));
-    }
-
-    final maxValue = summaries.fold<double>(
-      0,
-      (max, item) => math.max(max, math.max(item.income, item.expense)),
-    );
-    if (maxValue == 0) {
-      return const SizedBox(
-        height: _chartHeight,
-        child: Center(child: Text('暂无数据')),
+      return SectionCard(
+        title: '预算洞察',
+        subtitle: monthKey,
+        child: const Text('暂无预算数据', style: TextStyle(color: Colors.grey)),
       );
     }
 
-    final nowKey = monthKeyFromDate(DateTime(now.year, now.month));
-    // Round up maxValue to a nice number for axis labels
-    final niceMax = _niceMaxValue(maxValue);
-    final axisLabels = _axisLabels(niceMax);
-
-    return SizedBox(
-      height: _chartHeight + _topPadding,
-      child: Column(
-        children: [
-          // Legend
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF6AAF8A),
-                      borderRadius: BorderRadius.circular(2),
-                    )),
-                const SizedBox(width: 4),
-                Text('收入',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-                const SizedBox(width: 16),
-                Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE07B7B),
-                      borderRadius: BorderRadius.circular(2),
-                    )),
-                const SizedBox(width: 4),
-                Text('支出',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Y-axis labels
-                SizedBox(
-                  width: _yAxisWidth,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: axisLabels.reversed.map((label) {
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 4),
-                        child: Text(
-                          label,
-                          style:
-                              TextStyle(fontSize: 9, color: Colors.grey[500]),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ),
-                // Vertical axis line
-                Container(
-                  width: 1,
-                  color: Colors.grey[300],
-                ),
-                // Bars area
-                Expanded(
-                  child: Stack(
-                    children: [
-                      // Grid lines
-                      ...axisLabels.asMap().entries.map((entry) {
-                        final ratio = entry.key / (axisLabels.length - 1);
-                        return Positioned(
-                          left: 0,
-                          right: 0,
-                          top: ratio * (_chartHeight - _bottomLabelHeight),
-                          child: Container(
-                            height:
-                                entry.key == axisLabels.length - 1 ? 1 : 0.5,
-                            color: entry.key == axisLabels.length - 1
-                                ? Colors.grey[300]
-                                : Colors.grey[100],
-                          ),
-                        );
-                      }),
-                      // Bars
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: summaries.map((s) {
-                          final isFuture = s.monthKey.compareTo(nowKey) > 0;
-                          const barAreaHeight =
-                              _chartHeight - _bottomLabelHeight;
-                          final incomeHeight =
-                              (s.income / niceMax) * barAreaHeight;
-                          final expenseHeight =
-                              (s.expense / niceMax) * barAreaHeight;
-                          return Expanded(
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 2),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Container(
-                                        width: 10,
-                                        height: incomeHeight,
-                                        decoration: BoxDecoration(
-                                          color: isFuture
-                                              ? const Color(0xFF6AAF8A)
-                                                  .withValues(alpha: 0.3)
-                                              : const Color(0xFF6AAF8A),
-                                          borderRadius:
-                                              BorderRadius.circular(2),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 2),
-                                      Container(
-                                        width: 10,
-                                        height: expenseHeight,
-                                        decoration: BoxDecoration(
-                                          color: isFuture
-                                              ? const Color(0xFFE07B7B)
-                                                  .withValues(alpha: 0.3)
-                                              : const Color(0xFFE07B7B),
-                                          borderRadius:
-                                              BorderRadius.circular(2),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  SizedBox(
-                                    height: _bottomLabelHeight,
-                                    child: Center(
-                                      child: Text(
-                                        monthLabel(s.monthKey),
-                                        style: TextStyle(
-                                          fontSize: 9,
-                                          color: isFuture
-                                              ? Colors.grey[400]
-                                              : Colors.grey[600],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  double _niceMaxValue(double value) {
-    if (value <= 0) return 1;
-    final magnitude =
-        math.pow(10, (math.log(value) / math.ln10).floor()).toDouble();
-    final normalized = value / magnitude;
-    double niceNormalized;
-    if (normalized <= 1.0) {
-      niceNormalized = 1.0;
-    } else if (normalized <= 2.0) {
-      niceNormalized = 2.0;
-    } else if (normalized <= 5.0) {
-      niceNormalized = 5.0;
-    } else {
-      niceNormalized = 10.0;
-    }
-    return niceNormalized * magnitude;
-  }
-
-  List<String> _axisLabels(double maxValue) {
-    const count = 5;
-    return List.generate(count, (i) {
-      final value = maxValue * i / (count - 1);
-      return _formatAxisValue(value);
-    });
-  }
-
-  String _formatAxisValue(double value) {
-    if (value >= 10000) {
-      return '${(value / 10000).toStringAsFixed(value % 10000 == 0 ? 0 : 1)}万';
-    } else if (value >= 1000) {
-      return '${(value / 1000).toStringAsFixed(value % 1000 == 0 ? 0 : 1)}K';
-    } else if (value > 0) {
-      return value.toStringAsFixed(0);
-    }
-    return '0';
-  }
-}
-
-// ── 资产分布 (饼图) ──────────────────────────────────────────
-class _AssetDistributionPieChart extends StatelessWidget {
-  const _AssetDistributionPieChart({required this.repository});
-
-  final FinanceRepository repository;
-
-  static const _groupColors = <ReportGroup, Color>{
-    ReportGroup.cash: FinanceColors.cash,
-    ReportGroup.credit: FinanceColors.credit,
-    ReportGroup.investment: FinanceColors.investment,
-    ReportGroup.retirement: FinanceColors.retirement,
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final total = repository.totalAssets();
-    if (total == 0) return const Text('暂无资产数据');
-
-    final entries = <_AssetEntry>[];
-    for (final group in ReportGroup.values) {
-      final amount = repository.totalAssetsByGroup(group);
-      if (amount != 0) {
-        entries.add(_AssetEntry(
-          label: _groupLabel(group),
-          amount: amount,
-          pct: (amount / total * 100),
-          color: _groupColors[group]!,
-        ));
-      }
-    }
-
-    final pie = SizedBox(
-      width: 140,
-      height: 140,
-      child: CustomPaint(
-        painter: _PieChartPainter(entries: entries),
-      ),
-    );
-    final legend = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: entries.map((e) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Row(
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  color: e.color,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  e.label,
-                  style: const TextStyle(fontSize: 13),
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    formatMoney(e.amount),
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  Text(
-                    '${e.pct.toStringAsFixed(1)}%',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 360) {
-          return Column(
-            children: [
-              Center(child: pie),
-              const SizedBox(height: 14),
-              legend,
-            ],
-          );
-        }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            pie,
-            const SizedBox(width: 20),
-            Expanded(child: legend),
-          ],
-        );
-      },
-    );
-  }
-
-  String _groupLabel(ReportGroup group) {
-    switch (group) {
-      case ReportGroup.cash:
-        return '现金';
-      case ReportGroup.credit:
-        return '信用';
-      case ReportGroup.investment:
-        return '投资';
-      case ReportGroup.retirement:
-        return '退休';
-    }
-  }
-}
-
-class _PieChartPainter extends CustomPainter {
-  _PieChartPainter({required this.entries});
-
-  final List<_AssetEntry> entries;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = math.min(size.width, size.height) / 2;
-    final rect = Rect.fromCircle(center: center, radius: radius);
-
-    var startAngle = -math.pi / 2; // Start from top
-    for (final entry in entries) {
-      final sweepAngle = (entry.pct / 100) * 2 * math.pi;
-      final paint = Paint()
-        ..style = PaintingStyle.fill
-        ..color = entry.color;
-      canvas.drawArc(rect, startAngle, sweepAngle, true, paint);
-      startAngle += sweepAngle;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _PieChartPainter oldDelegate) {
-    return oldDelegate.entries != entries;
-  }
-}
-
-class _AssetEntry {
-  final String label;
-  final double amount;
-  final double pct;
-  final Color color;
-  _AssetEntry(
-      {required this.label,
-      required this.amount,
-      required this.pct,
-      required this.color});
-}
-
-// ── 账户明细 ─────────────────────────────────────────────────
-class _AccountDetails extends StatelessWidget {
-  const _AccountDetails({required this.repository});
-
-  final FinanceRepository repository;
-
-  @override
-  Widget build(BuildContext context) {
-    final now = repository.currentMonthCutoffDate();
-    final rows = <_AccountRow>[];
-    for (final group in ReportGroup.values) {
-      for (final acc in repository.accountsByGroup(group)) {
-        final balance = repository.accountBalanceAtBase(acc.id, now);
-        rows.add(_AccountRow(
-          name: acc.name,
-          typeLabel: _accountTypeLabel(acc.accountType),
-          balance: balance,
-        ));
-      }
-    }
-
-    if (rows.isEmpty) {
-      return const Text('暂无账户数据', style: TextStyle(color: Colors.grey));
-    }
-
-    return Column(
-      children: rows.map((row) {
-        final isNegative = row.balance < 0;
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            children: [
-              Expanded(
-                flex: 3,
-                child: Text(
-                  row.name,
-                  style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w500),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: Text(
-                  row.typeLabel,
-                  style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-                ),
-              ),
-              Text(
-                formatMoney(row.balance),
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: isNegative
-                      ? const Color(0xFFE07B7B)
-                      : const Color(0xFF6AAF8A),
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  String _accountTypeLabel(AccountType type) {
-    switch (type) {
-      case AccountType.cash:
-        return '现金';
-      case AccountType.bankSaving:
-        return '储蓄';
-      case AccountType.eWallet:
-        return '电子钱包';
-      case AccountType.creditCard:
-        return '信用卡';
-      case AccountType.moneyMarketFund:
-        return '货币基金';
-      case AccountType.pension:
-        return '养老金';
-      case AccountType.stock:
-        return '股票';
-      case AccountType.crypto:
-        return '加密货币';
-      case AccountType.trading:
-        return '交易';
-      case AccountType.fund:
-        return '基金';
-      case AccountType.other:
-        return '其他';
-    }
-  }
-}
-
-class _AccountRow {
-  final String name;
-  final String typeLabel;
-  final double balance;
-  _AccountRow(
-      {required this.name, required this.typeLabel, required this.balance});
-}
-
-// ── AI 分析 ─────────────────────────────────────────────────
-class _AiResultDisplay extends ConsumerStatefulWidget {
-  const _AiResultDisplay();
-
-  @override
-  ConsumerState<_AiResultDisplay> createState() => _AiResultDisplayState();
-}
-
-class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      // 如果已分析完成（用户离开期间完成），直接弹窗
-      final current = ref.read(aiAnalysisProvider);
-      if (current.completed && current.summary != null) {
-        ref.read(aiAnalysisProvider.notifier).dismissCompleted();
-        _showCompletedDialog();
-      }
-
-      ref.listen<AiAnalysisState>(aiAnalysisProvider, (prev, next) {
-        if (next.completed && next.summary != null) {
-          ref.read(aiAnalysisProvider.notifier).dismissCompleted();
-          _showCompletedDialog();
-        }
-        if (next.error != null && prev?.error == null) {
-          showDialog(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('AI 分析失败'),
-              content: Text(next.error!, style: const TextStyle(fontSize: 14)),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    ref.read(aiAnalysisProvider.notifier).clearError();
-                  },
-                  child: const Text('确定'),
-                ),
-              ],
-            ),
-          );
-        }
-      });
-    });
-  }
-
-  void _showCompletedDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('分析完成'),
-        content: const Text('AI 财务分析报告已生成，向下滚动查看。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('查看'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final aiState = ref.watch(aiAnalysisProvider);
-
-    if (aiState.loading) {
-      return Container(
-        margin: const EdgeInsets.only(top: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(12),
-          border:
-              Border.all(color: const Color(0xFF5B9BD5).withValues(alpha: 0.2)),
-        ),
-        child: const Row(
-          children: [
-            SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2)),
-            SizedBox(width: 12),
-            Text('AI 正在分析中...',
-                style: TextStyle(fontSize: 13, color: Color(0xFF6B8F7B))),
-          ],
-        ),
+    // Sort by usage ratio
+    final budgetData = activeBudgets.map((budget) {
+      final effective = repository.effectiveBudgetForMonth(budget, monthKey);
+      final spent = repository.expenseTotalForCategory(budget.categoryId, monthKey);
+      final ratio = effective > 0 ? spent / effective : 0.0;
+      final variance = effective - spent;
+      return _BudgetItem(
+        name: repository.categoryName(budget.categoryId),
+        spent: spent,
+        budget: effective,
+        ratio: ratio,
+        variance: variance,
       );
-    }
+    }).toList()
+      ..sort((a, b) => b.ratio.compareTo(a.ratio));
 
-    if (aiState.summary == null) return const SizedBox.shrink();
+    final totalBudget = activeBudgets.fold<double>(0, (sum, b) => sum + repository.effectiveBudgetForMonth(b, monthKey));
+    final totalSpent = activeBudgets.fold<double>(0, (sum, b) => sum + repository.expenseTotalForCategory(b.categoryId, monthKey));
+    final overallRatio = totalBudget > 0 ? totalSpent / totalBudget : 0.0;
 
-    return Container(
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(12),
-        border:
-            Border.all(color: const Color(0xFF5B9BD5).withValues(alpha: 0.2)),
-        boxShadow: const [
-          BoxShadow(
-              color: Color(0x080F172A), blurRadius: 8, offset: Offset(0, 2)),
-        ],
-      ),
+    return SectionCard(
+      title: '预算洞察',
+      subtitle: '$monthKey · 总体使用 ${(overallRatio * 100).toStringAsFixed(0)}%',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Text('AI 分析报告',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-              const Spacer(),
-              GestureDetector(
-                onTap: () => ref.read(aiAnalysisProvider.notifier).state =
-                    const AiAnalysisState(),
-                child: Icon(Icons.close, size: 18, color: Colors.grey[400]),
+          // Overall progress
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: overallRatio.clamp(0.0, 1.0),
+              backgroundColor: Colors.grey[200],
+              valueColor: AlwaysStoppedAnimation(
+                overallRatio > 1.0 ? FinanceColors.expense : FinanceColors.income,
               ),
-            ],
+              minHeight: 8,
+            ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
+          // Top over-budget categories
+          if (budgetData.any((b) => b.ratio > 1.0)) ...[
+            Text('超支类别', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: FinanceColors.expense)),
+            const SizedBox(height: 8),
+            ...budgetData.where((b) => b.ratio > 1.0).take(3).map((b) => _BudgetInsightItem(
+              name: b.name,
+              ratio: b.ratio,
+              variance: b.variance,
+              isOver: true,
+            )),
+            const SizedBox(height: 12),
+          ],
+          // Top under-budget categories
+          if (budgetData.any((b) => b.ratio <= 0.8)) ...[
+            Text('节省类别', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: FinanceColors.income)),
+            const SizedBox(height: 8),
+            ...budgetData.where((b) => b.ratio <= 0.8).take(3).map((b) => _BudgetInsightItem(
+              name: b.name,
+              ratio: b.ratio,
+              variance: b.variance,
+              isOver: false,
+            )),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _BudgetItem {
+  final String name;
+  final double spent;
+  final double budget;
+  final double ratio;
+  final double variance;
+
+  _BudgetItem({
+    required this.name,
+    required this.spent,
+    required this.budget,
+    required this.ratio,
+    required this.variance,
+  });
+}
+
+class _BudgetInsightItem extends StatelessWidget {
+  const _BudgetInsightItem({
+    required this.name,
+    required this.ratio,
+    required this.variance,
+    required this.isOver,
+  });
+
+  final String name;
+  final double ratio;
+  final double variance;
+  final bool isOver;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isOver ? FinanceColors.expense : FinanceColors.income;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(name, style: const TextStyle(fontSize: 13)),
+          ),
           Text(
-            aiState.summary!,
-            style: const TextStyle(
-                fontSize: 13, height: 1.6, color: Color(0xFF2D4A3E)),
+            '${(ratio * 100).toStringAsFixed(0)}%',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              '${variance >= 0 ? '剩余' : '超支'} ${formatMoney(variance.abs())}',
+              style: TextStyle(fontSize: 11, color: color),
+            ),
           ),
         ],
       ),
@@ -1330,57 +738,19 @@ class _AiResultDisplayState extends ConsumerState<_AiResultDisplay> {
   }
 }
 
-/// AI 分析按钮
-class _AiAnalysisButton extends ConsumerWidget {
-  const _AiAnalysisButton(
-      {required this.includePlanned, required this.monthCount});
+// ═══════════════════════════════════════════════════════════════
+// Section 4: Expense Analysis
+// ═══════════════════════════════════════════════════════════════
 
-  final bool includePlanned;
-  final int monthCount;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final aiState = ref.watch(aiAnalysisProvider);
-
-    return OutlinedButton.icon(
-      onPressed: aiState.loading
-          ? null
-          : () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(includePlanned
-                      ? 'AI 正在分析全部数据（含预计），完成后会通知你'
-                      : 'AI 正在分析已发生数据，完成后会通知你'),
-                  duration: const Duration(seconds: 3),
-                ),
-              );
-              ref.read(aiAnalysisProvider.notifier).runAnalysis(
-                    includePlanned: includePlanned,
-                    monthCount: monthCount,
-                  );
-            },
-      icon: aiState.loading
-          ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2))
-          : const Icon(Icons.auto_awesome_outlined, size: 18),
-      label: Text(aiState.loading ? '分析中...' : 'AI 分析',
-          style: const TextStyle(fontSize: 13)),
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-      ),
-    );
-  }
-}
-
-class _ExpenseCategoryBreakdown extends StatelessWidget {
-  const _ExpenseCategoryBreakdown({
+class _ExpenseAnalysisSection extends StatelessWidget {
+  const _ExpenseAnalysisSection({
     required this.repository,
+    required this.currentMonthKey,
     required this.monthKeys,
   });
 
   final FinanceRepository repository;
+  final String currentMonthKey;
   final List<String> monthKeys;
 
   @override
@@ -1390,211 +760,632 @@ class _ExpenseCategoryBreakdown extends StatelessWidget {
       monthKeys: monthKeys,
     );
 
-    if (categoryTotals.isEmpty) {
-      return const Text('暂无支出数据', style: TextStyle(color: Colors.grey));
-    }
-
-    final sortedEntries = categoryTotals.entries.toList()
+    final sortedCategories = categoryTotals.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    final totalExpense = sortedEntries.fold<double>(0, (sum, e) => sum + e.value);
+    final totalExpense = sortedCategories.fold<double>(0, (sum, e) => sum + e.value);
 
-    final colors = [
-      const Color(0xFF5B9BD5),
-      const Color(0xFF6AAF8A),
-      const Color(0xFFE8A838),
-      const Color(0xFFE07B7B),
-      const Color(0xFF9B59B6),
-      const Color(0xFF1ABC9C),
-      const Color(0xFFE67E22),
-      const Color(0xFF3498DB),
-    ];
+    // Account ranking
+    final accounts = repository.accounts;
+    final accountExpenses = <String, double>{};
+    for (final account in accounts) {
+      final expense = repository.expenseBreakdownForAccount(account.id, currentMonthKey)
+          .values.fold<double>(0, (sum, amount) => sum + amount);
+      if (expense > 0) {
+        accountExpenses[account.id] = expense;
+      }
+    }
+    final sortedAccounts = accountExpenses.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ...sortedEntries.take(10).toList().asMap().entries.map((entry) {
-          final index = entry.key;
-          final categoryTotal = entry.value;
-          final categoryName = repository.categoryName(categoryTotal.key);
-          final amount = categoryTotal.value;
-          final percentage = totalExpense > 0 ? (amount / totalExpense * 100) : 0.0;
-          final color = colors[index % colors.length];
+    final colors = FinanceColors.categoryPalette;
 
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    // Prepare pie chart data
+    final categoryPieData = sortedCategories.take(8).map((e) {
+      final name = repository.categoryName(e.key);
+      final percentage = totalExpense > 0 ? (e.value / totalExpense * 100) : 0.0;
+      return _PieData(label: name, value: e.value, percentage: percentage);
+    }).toList();
+
+    final accountPieData = sortedAccounts.take(6).map((e) {
+      final name = repository.accountName(e.key);
+      final percentage = totalExpense > 0 ? (e.value / totalExpense * 100) : 0.0;
+      return _PieData(label: name, value: e.value, percentage: percentage);
+    }).toList();
+
+    return SectionCard(
+      title: '支出分析',
+      subtitle: monthKeys.length == 1
+          ? '$currentMonthKey 本月支出 ${formatMoney(totalExpense)}'
+          : '${monthKeys.first} 至 ${monthKeys.last} 支出 ${formatMoney(totalExpense)}',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Category pie chart
+          Text('支出分类', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
+          if (categoryPieData.isNotEmpty)
+            Row(
               children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: color,
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        categoryName,
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                      ),
-                    ),
-                    Text(
-                      '${formatMoney(amount)} (${percentage.toStringAsFixed(1)}%)',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                    ),
-                  ],
+                SizedBox(
+                  width: 120,
+                  height: 120,
+                  child: _SimplePieChart(
+                    values: categoryPieData.map((d) => d.value).toList(),
+                    colors: colors,
+                  ),
                 ),
-                const SizedBox(height: 4),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: (percentage / 100).clamp(0.0, 1.0),
-                    backgroundColor: Colors.grey[200],
-                    valueColor: AlwaysStoppedAnimation(color),
-                    minHeight: 5,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _PieLegend(
+                    items: categoryPieData,
+                    colors: colors,
                   ),
                 ),
               ],
             ),
-          );
-        }),
-        if (sortedEntries.length > 10)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              '...还有 ${sortedEntries.length - 10} 个类别',
-              style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+          const SizedBox(height: 16),
+          // Account pie chart
+          if (sortedAccounts.isNotEmpty) ...[
+            Text('账户支出', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                SizedBox(
+                  width: 120,
+                  height: 120,
+                  child: _SimplePieChart(
+                    values: accountPieData.map((d) => d.value).toList(),
+                    colors: List.generate(accountPieData.length, (i) => colors[(i + 5) % colors.length]),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _PieLegend(
+                    items: accountPieData,
+                    colors: List.generate(accountPieData.length, (i) => colors[(i + 5) % colors.length]),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ExpenseBar extends StatelessWidget {
+  const _ExpenseBar({
+    required this.label,
+    required this.amount,
+    required this.percentage,
+    required this.color,
+  });
+
+  final String label;
+  final double amount;
+  final double percentage;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(label, style: const TextStyle(fontSize: 13)),
+              ),
+              Text(
+                '${formatMoney(amount)} (${percentage.toStringAsFixed(1)}%)',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: (percentage / 100).clamp(0.0, 1.0),
+              backgroundColor: Colors.grey[200],
+              valueColor: AlwaysStoppedAnimation(color),
+              minHeight: 4,
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 }
 
-class _AssetTrendLine extends StatelessWidget {
-  const _AssetTrendLine({required this.repository});
+// ═══════════════════════════════════════════════════════════════
+// Section 5: Asset Health
+// ═══════════════════════════════════════════════════════════════
+
+class _AssetHealthSection extends StatelessWidget {
+  const _AssetHealthSection({required this.repository});
 
   final FinanceRepository repository;
 
   @override
   Widget build(BuildContext context) {
+    final totalAssets = repository.totalAssets();
+    final cashBalance = repository.totalAssetsByGroup(ReportGroup.cash);
+    final creditDebt = repository.totalAssetsByGroup(ReportGroup.credit);
+    final investmentBalance = repository.totalAssetsByGroup(ReportGroup.investment);
+    final retirementBalance = repository.totalAssetsByGroup(ReportGroup.retirement);
+
+    // Investment P&L
+    final investmentAccounts = repository.investmentAccounts();
+    final cutoffDate = repository.currentMonthCutoffDate();
+    double totalMarketValue = 0;
+    double totalCostBasis = 0;
+    for (final account in investmentAccounts) {
+      totalMarketValue += repository.accountBalanceAt(account.id, cutoffDate);
+      totalCostBasis += repository.costBasisForAccount(account.id);
+    }
+    final unrealizedPnL = totalMarketValue - totalCostBasis;
+    final pnlRatio = totalCostBasis > 0 ? (unrealizedPnL / totalCostBasis * 100) : 0.0;
+
+    // Asset trend
     final history = repository.totalAssetHistory();
 
-    if (history.isEmpty) {
-      return const Text('暂无资产数据', style: TextStyle(color: Colors.grey));
-    }
+    // Asset distribution pie data
+    final assetPieData = [
+      _PieData(label: '现金', value: cashBalance, percentage: totalAssets > 0 ? (cashBalance / totalAssets * 100) : 0),
+      _PieData(label: '信用负债', value: creditDebt.abs(), percentage: totalAssets > 0 ? (creditDebt.abs() / totalAssets * 100) : 0),
+      _PieData(label: '投资', value: investmentBalance, percentage: totalAssets > 0 ? (investmentBalance / totalAssets * 100) : 0),
+      _PieData(label: '退休', value: retirementBalance, percentage: totalAssets > 0 ? (retirementBalance / totalAssets * 100) : 0),
+    ];
 
-    final points = history
-        .map((point) => ChartPoint(
-              label: point.label,
-              value: point.totalAssets,
-            ))
-        .toList();
-
-    return SimpleLineChart(
-      points: points,
-      amountBuilder: formatMoneyValue,
+    return SectionCard(
+      title: '资产健康',
+      subtitle: '净资产 ${formatMoney(totalAssets)}',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Asset distribution with pie chart
+          Text('资产分布', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              SizedBox(
+                width: 120,
+                height: 120,
+                child: _SimplePieChart(
+                  values: assetPieData.map((d) => d.value).toList(),
+                  colors: [FinanceColors.cash, FinanceColors.credit, FinanceColors.investment, FinanceColors.retirement],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _PieLegend(
+                  items: assetPieData,
+                  colors: [FinanceColors.cash, FinanceColors.credit, FinanceColors.investment, FinanceColors.retirement],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Investment performance
+          if (investmentAccounts.isNotEmpty) ...[
+            Text('投资表现', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _MetricItem(
+                    label: '总市值',
+                    value: formatMoney(totalMarketValue),
+                    color: FinanceColors.info,
+                  ),
+                ),
+                Expanded(
+                  child: _MetricItem(
+                    label: '未实现盈亏',
+                    value: '${formatMoney(unrealizedPnL)} (${pnlRatio.toStringAsFixed(1)}%)',
+                    color: unrealizedPnL >= 0 ? FinanceColors.income : FinanceColors.expense,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            // Investment sub-categories
+            Text('投资子类', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            ...investmentAccounts.map((account) {
+              final balance = repository.accountBalanceAt(account.id, cutoffDate);
+              final percentage = totalMarketValue > 0 ? (balance / totalMarketValue * 100) : 0.0;
+              return _AssetBar(
+                label: account.name,
+                amount: balance,
+                percentage: percentage,
+                color: FinanceColors.investment,
+              );
+            }),
+            const SizedBox(height: 16),
+          ],
+          // Asset trend
+          if (history.isNotEmpty) ...[
+            Text('资产趋势', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 120,
+              child: SimpleLineChart(
+                points: history.map((p) => ChartPoint(label: p.label, value: p.totalAssets)).toList(),
+                amountBuilder: formatMoneyValue,
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
 
-class _FutureCashFlowProjection extends StatelessWidget {
-  const _FutureCashFlowProjection({required this.repository});
+class _AssetBar extends StatelessWidget {
+  const _AssetBar({
+    required this.label,
+    required this.amount,
+    required this.color,
+    this.percentage,
+  });
 
-  final FinanceRepository repository;
+  final String label;
+  final double amount;
+  final Color color;
+  final double? percentage;
 
   @override
   Widget build(BuildContext context) {
-    final projection = repository.futureCashFlowProjection(months: 3);
-    final forecast = repository.forecastSummary(months: 3);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(label, style: const TextStyle(fontSize: 13)),
+              ),
+              Text(
+                percentage != null
+                    ? '${formatMoney(amount)} (${percentage!.toStringAsFixed(1)}%)'
+                    : formatMoney(amount),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Colors.grey[700]),
+              ),
+            ],
+          ),
+          if (percentage != null) ...[
+            const SizedBox(height: 4),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: (percentage! / 100).clamp(0.0, 1.0),
+                backgroundColor: Colors.grey[200],
+                valueColor: AlwaysStoppedAnimation(color),
+                minHeight: 4,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
 
-    if (projection.isEmpty) {
-      return const Text('暂无预测数据', style: TextStyle(color: Colors.grey));
-    }
+class _MetricItem extends StatelessWidget {
+  const _MetricItem({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
 
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 预测摘要
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: FinanceColors.info.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: FinanceColors.info.withValues(alpha: 0.3)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '预测摘要',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                ),
-                const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _ForecastItem(
-                    label: '月均收入',
-                    value: formatMoney(forecast.averageMonthlyIncome),
-                    color: FinanceColors.income,
-                  ),
-                  _ForecastItem(
-                    label: '月均支出',
-                    value: formatMoney(forecast.averageMonthlyExpense),
-                    color: FinanceColors.expense,
-                  ),
-                  _ForecastItem(
-                    label: '月均储蓄',
-                    value: formatMoney(forecast.averageMonthlySavings),
-                    color: forecast.averageMonthlySavings >= 0
-                        ? FinanceColors.income
-                        : FinanceColors.expense,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        // 月度预测
-        ...projection.map((point) => Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  point.monthKey,
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                ),
-              ),
-              _ForecastItem(
-                label: '收入',
-                value: formatMoney(point.income),
-                color: FinanceColors.income,
-              ),
-              const SizedBox(width: 12),
-              _ForecastItem(
-                label: '支出',
-                value: formatMoney(point.expense),
-                color: FinanceColors.expense,
-              ),
-              const SizedBox(width: 12),
-              _ForecastItem(
-                label: '净额',
-                value: formatMoney(point.net),
-                color: point.net >= 0 ? FinanceColors.income : FinanceColors.expense,
-              ),
-            ],
-          ),
-        )),
+        Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+        Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: color)),
       ],
     );
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Section 6: Future Forecast
+// ═══════════════════════════════════════════════════════════════
+
+class _FutureForecastSection extends StatelessWidget {
+  const _FutureForecastSection({required this.repository});
+
+  final FinanceRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    final forecast = repository.forecastSummary(months: 3);
+    final projection = repository.futureCashFlowProjection(months: 3);
+    final goalSummaries = repository.assetGoalSummaries();
+    final now = DateTime.now();
+
+    // Calculate historical average (last 3 months)
+    final historyMonths = List.generate(3, (i) {
+      final date = DateTime(now.year, now.month - 2 + i);
+      return monthKeyFromDate(date);
+    });
+    double avgIncome = 0;
+    double avgExpense = 0;
+    for (final month in historyMonths) {
+      avgIncome += repository.totalIncomeForMonth(month);
+      avgExpense += repository.totalExpenseForMonth(month);
+    }
+    avgIncome /= 3;
+    avgExpense /= 3;
+
+    // Recent 3 months actual
+    final recentMonths = List.generate(3, (i) {
+      final date = DateTime(now.year, now.month - 2 + i);
+      return monthKeyFromDate(date);
+    });
+    final recentData = recentMonths.map((month) => _MonthlyData(
+      monthKey: month,
+      income: repository.totalIncomeForMonth(month),
+      expense: repository.totalExpenseForMonth(month),
+    )).toList();
+
+    return SectionCard(
+      title: '财务预测',
+      subtitle: '基于历史数据的分析与预测',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Savings rate
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: FinanceColors.info.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: FinanceColors.info.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.savings_outlined, size: 24, color: FinanceColors.info),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('月均储蓄', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                      Text(
+                        formatMoney(forecast.averageMonthlySavings),
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text('储蓄率', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                    Text(
+                      forecast.averageMonthlyIncome > 0
+                          ? '${(forecast.averageMonthlySavings / forecast.averageMonthlyIncome * 100).toStringAsFixed(1)}%'
+                          : '0%',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Historical average
+          Text('历史平均（近3月）', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(child: _ForecastItem(label: '月均收入', value: formatMoney(avgIncome), color: FinanceColors.income)),
+              const SizedBox(width: 12),
+              Expanded(child: _ForecastItem(label: '月均支出', value: formatMoney(avgExpense), color: FinanceColors.expense)),
+              const SizedBox(width: 12),
+              Expanded(child: _ForecastItem(label: '月均储蓄', value: formatMoney(avgIncome - avgExpense), color: FinanceColors.info)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Recent 3 months
+          Text('近3个月实际', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          ...recentData.map((data) => _MonthlyDataCard(data: data)),
+          const SizedBox(height: 16),
+          // Future 3 months prediction
+          Text('未来3个月预测', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          ...projection.map((point) => _ForecastDataCard(point: point)),
+          const SizedBox(height: 16),
+          // Goal progress with line chart
+          if (goalSummaries.isNotEmpty) ...[
+            Text('储蓄目标', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            ...goalSummaries.map((g) {
+              final pct = g.progressRatio * 100;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(child: Text(g.goal.name, style: const TextStyle(fontSize: 13))),
+                        Text('${pct.toStringAsFixed(1)}%', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: pct >= 100 ? FinanceColors.income : FinanceColors.info)),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(2),
+                      child: LinearProgressIndicator(
+                        value: math.min(g.progressRatio, 1.0),
+                        backgroundColor: Colors.grey[200],
+                        valueColor: AlwaysStoppedAnimation(pct >= 100 ? FinanceColors.income : FinanceColors.info),
+                        minHeight: 4,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 100,
+                      child: _GoalProgressChart(goal: g, forecast: forecast),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Pie Chart Components
+// ═══════════════════════════════════════════════════════════════
+
+class _PieData {
+  final String label;
+  final double value;
+  final double percentage;
+
+  _PieData({required this.label, required this.value, required this.percentage});
+}
+
+class _SimplePieChart extends StatelessWidget {
+  const _SimplePieChart({required this.values, required this.colors});
+
+  final List<double> values;
+  final List<Color> colors;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = values.fold<double>(0, (sum, v) => sum + v);
+    if (total == 0) return const SizedBox();
+
+    return CustomPaint(
+      painter: _PieChartPainter(values: values, colors: colors, total: total),
+      child: Container(),
+    );
+  }
+}
+
+class _PieChartPainter extends CustomPainter {
+  _PieChartPainter({
+    required this.values,
+    required this.colors,
+    required this.total,
+  });
+
+  final List<double> values;
+  final List<Color> colors;
+  final double total;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = math.min(size.width, size.height) / 2;
+
+    var startAngle = -math.pi / 2;
+    for (var i = 0; i < values.length; i++) {
+      final sweepAngle = (values[i] / total) * 2 * math.pi;
+      final paint = Paint()
+        ..color = colors[i % colors.length]
+        ..style = PaintingStyle.fill;
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        startAngle,
+        sweepAngle,
+        true,
+        paint,
+      );
+      startAngle += sweepAngle;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class _PieLegend extends StatelessWidget {
+  const _PieLegend({required this.items, required this.colors});
+
+  final List<_PieData> items;
+  final List<Color> colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: items.asMap().entries.map((entry) {
+        final index = entry.key;
+        final item = entry.value;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: colors[index % colors.length],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(item.label, style: const TextStyle(fontSize: 11), overflow: TextOverflow.ellipsis),
+              ),
+              Text('${item.percentage.toStringAsFixed(1)}%', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Forecast Components
+// ═══════════════════════════════════════════════════════════════
+
+class _MonthlyData {
+  final String monthKey;
+  final double income;
+  final double expense;
+
+  _MonthlyData({required this.monthKey, required this.income, required this.expense});
 }
 
 class _ForecastItem extends StatelessWidget {
@@ -1612,103 +1403,145 @@ class _ForecastItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
       children: [
-        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
-        Text(
-          value,
-          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
-        ),
+        Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+        Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
       ],
     );
   }
 }
 
-class _InvestmentPnLSummary extends StatelessWidget {
-  const _InvestmentPnLSummary({required this.repository});
+class _GoalProgressChart extends StatelessWidget {
+  const _GoalProgressChart({required this.goal, required this.forecast});
 
-  final FinanceRepository repository;
+  final dynamic goal;
+  final dynamic forecast;
 
   @override
   Widget build(BuildContext context) {
-    final investmentAccounts = repository.investmentAccounts();
-
-    if (investmentAccounts.isEmpty) {
-      return const Text('暂无投资账户', style: TextStyle(color: Colors.grey));
+    final targetAmount = goal.goal.targetAmount;
+    final currentAmount = goal.currentAssets;
+    final monthlySavings = forecast.averageMonthlySavings;
+    
+    if (monthlySavings <= 0) {
+      return Center(
+        child: Text('需要正储蓄才能达成目标', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+      );
     }
 
-    double totalMarketValue = 0;
-    double totalCostBasis = 0;
-    double totalCashBalance = 0;
-    double totalContribution = 0;
-    double totalWithdrawal = 0;
-
-    final cutoffDate = repository.currentMonthCutoffDate();
-
-    for (final account in investmentAccounts) {
-      final balance = repository.accountBalanceAt(account.id, cutoffDate);
-      final cost = repository.costBasisForAccount(account.id, upToDate: cutoffDate);
-      final cash = repository.cashBalanceForAccount(account.id, upToDate: cutoffDate);
-      final flow = repository.investmentFlowSummaryForAccount(account.id, upToDate: cutoffDate);
-
-      totalMarketValue += balance;
-      totalCostBasis += cost;
-      totalCashBalance += cash;
-      totalContribution += flow.contribution;
-      totalWithdrawal += flow.withdrawal;
-    }
-
-    final remainingCost = (totalCostBasis - totalWithdrawal).clamp(0, double.infinity).toDouble();
-    final unrealizedPnL = totalMarketValue - remainingCost;
-    final pnlRatio = remainingCost > 0 ? (unrealizedPnL / remainingCost * 100) : 0.0;
-    final pnlColor = unrealizedPnL >= 0 ? FinanceColors.income : FinanceColors.expense;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 12,
-          runSpacing: 8,
-          children: [
-            _InvestmentMetric(
-              label: '总市值',
-              value: formatMoney(totalMarketValue),
-              color: FinanceColors.info,
-            ),
-            _InvestmentMetric(
-              label: '累计成本',
-              value: formatMoney(totalCostBasis),
-              color: Colors.grey[700]!,
-            ),
-            _InvestmentMetric(
-              label: '现金余额',
-              value: formatMoney(totalCashBalance),
-              color: FinanceColors.cash,
-            ),
-            _InvestmentMetric(
-              label: '累计投入',
-              value: formatMoney(totalContribution),
-              color: FinanceColors.income,
-            ),
-            _InvestmentMetric(
-              label: '累计取出',
-              value: formatMoney(totalWithdrawal),
-              color: FinanceColors.expense,
-            ),
-            _InvestmentMetric(
-              label: '未实现盈亏',
-              value: '${formatMoney(unrealizedPnL)} (${pnlRatio.toStringAsFixed(1)}%)',
-              color: pnlColor,
-            ),
-          ],
-        ),
-      ],
+    final remaining = targetAmount - currentAmount;
+    final monthsNeeded = (remaining / monthlySavings).ceil();
+    
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('剩余 ${formatMoney(remaining)}', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+              Text('月均 ${formatMoney(monthlySavings)}', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+            ],
+          ),
+          Text(
+            '预计 $monthsNeeded 个月',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: FinanceColors.info),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _InvestmentMetric extends StatelessWidget {
-  const _InvestmentMetric({
+// ═══════════════════════════════════════════════════════════════
+// Responsive Data Cards
+// ═══════════════════════════════════════════════════════════════
+
+class _MonthlyDataCard extends StatelessWidget {
+  const _MonthlyDataCard({required this.data});
+
+  final _MonthlyData data;
+
+  @override
+  Widget build(BuildContext context) {
+    final netAmount = data.income - data.expense;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(data.monthKey, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _MiniMetric(label: '收入', value: formatMoney(data.income), color: FinanceColors.income),
+              _MiniMetric(label: '支出', value: formatMoney(data.expense), color: FinanceColors.expense),
+              _MiniMetric(
+                label: '净额',
+                value: formatMoney(netAmount),
+                color: netAmount >= 0 ? FinanceColors.income : FinanceColors.expense,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ForecastDataCard extends StatelessWidget {
+  const _ForecastDataCard({required this.point});
+
+  final dynamic point;
+
+  @override
+  Widget build(BuildContext context) {
+    final netAmount = point.income - point.expense;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(point.monthKey, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _MiniMetric(label: '收入', value: formatMoney(point.income), color: FinanceColors.income),
+              _MiniMetric(label: '支出', value: formatMoney(point.expense), color: FinanceColors.expense),
+              _MiniMetric(
+                label: '净额',
+                value: formatMoney(netAmount),
+                color: netAmount >= 0 ? FinanceColors.income : FinanceColors.expense,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniMetric extends StatelessWidget {
+  const _MiniMetric({
     required this.label,
     required this.value,
     required this.color,
@@ -1720,382 +1553,11 @@ class _InvestmentMetric extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
-          Text(
-            value,
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MonthOverMonthComparison extends StatelessWidget {
-  const _MonthOverMonthComparison({required this.repository});
-
-  final FinanceRepository repository;
-
-  @override
-  Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final currentMonthKey = monthKeyFromDate(now);
-    final lastMonth = DateTime(now.year, now.month - 1);
-    final lastMonthKey = monthKeyFromDate(lastMonth);
-
-    final currentIncome = repository.totalIncomeForMonth(currentMonthKey);
-    final lastIncome = repository.totalIncomeForMonth(lastMonthKey);
-    final currentExpense = repository.totalExpenseForMonth(currentMonthKey);
-    final lastExpense = repository.totalExpenseForMonth(lastMonthKey);
-
-    final incomeChange = lastIncome > 0 ? ((currentIncome - lastIncome) / lastIncome * 100) : 0.0;
-    final expenseChange = lastExpense > 0 ? ((currentExpense - lastExpense) / lastExpense * 100) : 0.0;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _ComparisonItem(
-          label: '收入',
-          currentValue: currentIncome,
-          lastValue: lastIncome,
-          change: incomeChange,
-          isIncome: true,
-        ),
-        const SizedBox(height: 12),
-        _ComparisonItem(
-          label: '支出',
-          currentValue: currentExpense,
-          lastValue: lastExpense,
-          change: expenseChange,
-          isIncome: false,
-        ),
-      ],
-    );
-  }
-}
-
-class _ComparisonItem extends StatelessWidget {
-  const _ComparisonItem({
-    required this.label,
-    required this.currentValue,
-    required this.lastValue,
-    required this.change,
-    required this.isIncome,
-  });
-
-  final String label;
-  final double currentValue;
-  final double lastValue;
-  final double change;
-  final bool isIncome;
-
-  @override
-  Widget build(BuildContext context) {
-    final isPositive = change >= 0;
-    final changeColor = isIncome
-        ? (isPositive ? FinanceColors.income : FinanceColors.expense)
-        : (isPositive ? FinanceColors.expense : FinanceColors.income);
-    final changeIcon = isPositive ? Icons.trending_up : Icons.trending_down;
-
-    return Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-              const SizedBox(height: 4),
-              Text(
-                formatMoney(currentValue),
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
-        ),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              '上月 ${formatMoney(lastValue)}',
-              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-            ),
-            const SizedBox(height: 4),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(changeIcon, size: 16, color: changeColor),
-                const SizedBox(width: 4),
-                Text(
-                  '${change >= 0 ? '+' : ''}${change.toStringAsFixed(1)}%',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: changeColor,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _TransferActivity extends StatelessWidget {
-  const _TransferActivity({
-    required this.repository,
-    required this.monthKey,
-  });
-
-  final FinanceRepository repository;
-  final String monthKey;
-
-  @override
-  Widget build(BuildContext context) {
-    final transfers = repository.transactions.where((t) {
-      return t.type == TransactionType.transfer &&
-          monthKeyFromDate(t.transactionDate) == monthKey &&
-          t.status != TransactionStatus.planned;
-    }).toList();
-
-    if (transfers.isEmpty) {
-      return const Text('本月无转账记录', style: TextStyle(color: Colors.grey));
-    }
-
-    final totalTransferAmount = transfers.fold<double>(0, (sum, t) => sum + t.amount);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.swap_horiz, size: 16, color: FinanceColors.transfer),
-            const SizedBox(width: 8),
-            Text(
-              '${transfers.length} 笔转账',
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-            ),
-            const Spacer(),
-            Text(
-              '总额 ${formatMoney(totalTransferAmount)}',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        ...transfers.take(5).map((transfer) => Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '${repository.accountName(transfer.accountId)} → ${repository.accountName(transfer.toAccountId ?? '')}',
-                  style: const TextStyle(fontSize: 12),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Text(
-                formatMoney(transfer.amount, currency: transfer.currency),
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-              ),
-            ],
-          ),
-        )),
-        if (transfers.length > 5)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              '...还有 ${transfers.length - 5} 笔',
-              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _ExpenseByAccount extends StatelessWidget {
-  const _ExpenseByAccount({
-    required this.repository,
-    required this.monthKey,
-  });
-
-  final FinanceRepository repository;
-  final String monthKey;
-
-  @override
-  Widget build(BuildContext context) {
-    final accounts = repository.accounts;
-    final accountExpenses = <String, double>{};
-
-    for (final account in accounts) {
-      final expense = repository.expenseBreakdownForAccount(account.id, monthKey)
-          .values.fold<double>(0, (sum, amount) => sum + amount);
-      if (expense > 0) {
-        accountExpenses[account.id] = expense;
-      }
-    }
-
-    if (accountExpenses.isEmpty) {
-      return const Text('本月无支出记录', style: TextStyle(color: Colors.grey));
-    }
-
-    final sortedEntries = accountExpenses.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    final totalExpense = sortedEntries.fold<double>(0, (sum, e) => sum + e.value);
-
-    final colors = FinanceColors.categoryPalette;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: sortedEntries.take(5).toList().asMap().entries.map((entry) {
-        final index = entry.key;
-        final accountTotal = entry.value;
-        final accountName = repository.accountName(accountTotal.key);
-        final amount = accountTotal.value;
-        final percentage = totalExpense > 0 ? (amount / totalExpense * 100) : 0.0;
-        final color = colors[index % colors.length];
-
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: color,
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      accountName,
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                  Text(
-                    '${formatMoney(amount)} (${percentage.toStringAsFixed(1)}%)',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: (percentage / 100).clamp(0.0, 1.0),
-                  backgroundColor: Colors.grey[200],
-                  valueColor: AlwaysStoppedAnimation(color),
-                  minHeight: 5,
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
-
-class _RecurringExpensesSummary extends StatelessWidget {
-  const _RecurringExpensesSummary({required this.repository});
-
-  final FinanceRepository repository;
-
-  @override
-  Widget build(BuildContext context) {
-    final rules = repository.recurringTransactionRules;
-
-    if (rules.isEmpty) {
-      return const Text('暂无周期性支出', style: TextStyle(color: Colors.grey));
-    }
-
-    double totalMonthly = 0;
-    final ruleDetails = <MapEntry<String, double>>[];
-
-    for (final rule in rules) {
-      final monthlyAmount = rule.amount;
-      totalMonthly += monthlyAmount;
-      final categoryName = rule.categoryId != null && rule.categoryId!.isNotEmpty
-          ? repository.categoryName(rule.categoryId!)
-          : rule.name;
-      ruleDetails.add(MapEntry(categoryName, monthlyAmount));
-    }
-
-    ruleDetails.sort((a, b) => b.value.compareTo(a.value));
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: FinanceColors.info.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: FinanceColors.info.withValues(alpha: 0.3)),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.repeat, size: 20, color: FinanceColors.info),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '每月固定支出总额',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                  ),
-                  Text(
-                    formatMoney(totalMonthly),
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                  ),
-                ],
-              ),
-              const Spacer(),
-              Text(
-                '${rules.length} 项规则',
-                style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        ...ruleDetails.map((entry) => Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            children: [
-              Icon(Icons.circle, size: 8, color: FinanceColors.info),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  entry.key,
-                  style: const TextStyle(fontSize: 13),
-                ),
-              ),
-              Text(
-                formatMoney(entry.value),
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-              ),
-            ],
-          ),
-        )),
+        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+        Text(value, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
       ],
     );
   }
